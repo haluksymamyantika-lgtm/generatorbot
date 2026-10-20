@@ -1,91 +1,75 @@
 
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.text.Text;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
+import net.minecraft.client.render.RenderLayer;
+import net.minecraft.client.render.VertexConsumer;
+import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
+import org.joml.Matrix4f;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-public class AreaManager {
-    public static class Area {
-        public int x1, y1, z1, x2, y2, z2;
-        /** false = czerwony (do odwiedzenia), true = niebieski (bot już tu był). Nie zapisuje się do pliku. */
-        public transient boolean visited;
+/** Czerwone zaznaczenie jak w Litematice: półprzezroczysta bryła + krawędzie. */
+public class AreaRenderer {
+    private static final int[][] FACES = {{0,1,2,3},{4,7,6,5},{0,4,5,1},{1,5,6,2},{2,6,7,3},{3,7,4,0}};
+    private static final int[][] EDGES = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
 
-        public Area() {}
+    public static void render(WorldRenderContext ctx) {
+        AreaManager am = GeneratorBotClient.AREAS;
+        if (am.areas.isEmpty() && am.pending == null) return;
+        MatrixStack ms = ctx.matrixStack();
+        VertexConsumerProvider vcp = ctx.consumers();
+        if (ms == null || vcp == null) return;
 
-        public Area(BlockPos a, BlockPos b) {
-            x1 = Math.min(a.getX(), b.getX()); x2 = Math.max(a.getX(), b.getX());
-            y1 = Math.min(a.getY(), b.getY()); y2 = Math.max(a.getY(), b.getY());
-            z1 = Math.min(a.getZ(), b.getZ()); z2 = Math.max(a.getZ(), b.getZ());
-        }
+        List<Box> boxes = new ArrayList<>();
+        List<float[]> cols = new ArrayList<>();
+        float[] RED = {1f, 0.05f, 0.05f}, BLUE = {0.15f, 0.4f, 1f};
+        for (AreaManager.Area a : am.areas) { boxes.add(a.box().expand(0.003)); cols.add(a.visited ? BLUE : RED); }
+        if (am.pending != null) { boxes.add(new Box(am.pending).expand(0.003)); cols.add(RED); }
 
-        public Box box() { return new Box(x1, y1, z1, x2 + 1, y2 + 1, z2 + 1); }
+        Vec3d cam = ctx.camera().getPos();
+        ms.push();
+        ms.translate(-cam.x, -cam.y, -cam.z);
+        Matrix4f mt = ms.peek().getPositionMatrix();
 
-        public boolean containsExpanded(Vec3d v, double e) {
-            return v.x >= x1 - e && v.x <= x2 + 1 + e
-                    && v.y >= y1 - e && v.y <= y2 + 1 + e
-                    && v.z >= z1 - e && v.z <= z2 + 1 + e;
-        }
+        VertexConsumer fill = vcp.getBuffer(RenderLayer.getDebugFilledBox());
+        for (int i = 0; i < boxes.size(); i++) fill(fill, mt, boxes.get(i), cols.get(i));
+        if (vcp instanceof VertexConsumerProvider.Immediate imm) imm.draw(RenderLayer.getDebugFilledBox());
 
-        public Vec3d center() { return new Vec3d((x1 + x2 + 1) / 2.0, (y1 + y2 + 1) / 2.0, (z1 + z2 + 1) / 2.0); }
+        VertexConsumer lines = vcp.getBuffer(RenderLayer.getLines());
+        for (int i = 0; i < boxes.size(); i++) outline(lines, ms.peek(), boxes.get(i), cols.get(i));
+        if (vcp instanceof VertexConsumerProvider.Immediate imm) imm.draw(RenderLayer.getLines());
 
-        public Vec3d flyPoint() { return new Vec3d((x1 + x2 + 1) / 2.0, y2 + 2.0, (z1 + z2 + 1) / 2.0); }
+        ms.pop();
     }
 
-    public final List<Area> areas = new ArrayList<>();
-    public BlockPos pending;
-
-    private final Path file = FabricLoader.getInstance().getConfigDir().resolve("generatorbot_areas.json");
-    private final Gson gson = new Gson();
-
-    public AreaManager() {
-        try {
-            if (Files.exists(file)) {
-                List<Area> loaded = gson.fromJson(Files.readString(file), new TypeToken<List<Area>>() {}.getType());
-                if (loaded != null) areas.addAll(loaded);
-            }
-        } catch (Exception ignored) {}
+    private static float[][] corners(Box b) {
+        float x1 = (float) b.minX, y1 = (float) b.minY, z1 = (float) b.minZ;
+        float x2 = (float) b.maxX, y2 = (float) b.maxY, z2 = (float) b.maxZ;
+        return new float[][]{{x1,y1,z1},{x2,y1,z1},{x2,y1,z2},{x1,y1,z2},{x1,y2,z1},{x2,y2,z1},{x2,y2,z2},{x1,y2,z2}};
     }
 
-    public void save() {
-        try { Files.writeString(file, gson.toJson(areas)); } catch (Exception ignored) {}
-    }
-
-    public void clear() { areas.clear(); pending = null; save(); }
-
-    public void onSelectPressed(MinecraftClient mc) {
-        if (mc.player == null) return;
-        if (mc.player.isSneaking()) { // Shift+J: cofnij
-            if (pending != null) { pending = null; Bot.msg(mc, "Anulowano zaznaczanie."); }
-            else if (!areas.isEmpty()) { areas.remove(areas.size() - 1); Bot.msg(mc, "Usunięto ostatni obszar."); }
-            save();
-            return;
-        }
-        BlockPos p = aimedPos(mc);
-        if (pending == null) {
-            pending = p;
-            Bot.msg(mc, "Pierwszy róg: " + p.toShortString() + " – zaznacz drugi (J). Shift+J = anuluj/usuń ostatni.");
-        } else {
-            areas.add(new Area(pending, p));
-            pending = null;
-            save();
-            Bot.msg(mc, "Dodano obszar nr " + areas.size() + ".");
+    private static void fill(VertexConsumer c, Matrix4f mt, Box b, float[] col) {
+        float[][] v = corners(b);
+        for (int[] f : FACES) {
+            for (int k = 0; k < 4; k++) c.vertex(mt, v[f[k]][0], v[f[k]][1], v[f[k]][2]).color(col[0], col[1], col[2], 0.22f);
+            for (int k = 3; k >= 0; k--) c.vertex(mt, v[f[k]][0], v[f[k]][1], v[f[k]][2]).color(col[0], col[1], col[2], 0.22f);
         }
     }
 
-    private BlockPos aimedPos(MinecraftClient mc) {
-        HitResult hr = mc.player.raycast(160, 1f, false);
-        if (hr.getType() == HitResult.Type.BLOCK) return BlockPos.ofFloored(hr.getPos().add(
-                mc.player.getRotationVec(1f).multiply(0.01)));
-        return mc.player.getBlockPos();
+    private static void outline(VertexConsumer c, MatrixStack.Entry e, Box b, float[] col) {
+        float[][] v = corners(b);
+        Matrix4f mt = e.getPositionMatrix();
+        for (int[] ed : EDGES) {
+            float[] a = v[ed[0]], d = v[ed[1]];
+            float nx = d[0] - a[0], ny = d[1] - a[1], nz = d[2] - a[2];
+            float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+            if (len == 0) continue;
+            nx /= len; ny /= len; nz /= len;
+            c.vertex(mt, a[0], a[1], a[2]).color(col[0], col[1], col[2], 1f).normal(e, nx, ny, nz);
+            c.vertex(mt, d[0], d[1], d[2]).color(col[0], col[1], col[2], 1f).normal(e, nx, ny, nz);
+        }
     }
 }
