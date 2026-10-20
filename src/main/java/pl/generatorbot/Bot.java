@@ -38,10 +38,17 @@ public class Bot {
             Blocks.ACACIA_LOG, Blocks.DARK_OAK_LOG, Blocks.OAK_LOG,
             Blocks.ACACIA_WOOD, Blocks.DARK_OAK_WOOD, Blocks.OAK_WOOD);
     private static final double REACH = 4.4;
-    private static final double FLEE_DIST_SQ = 20.0 * 20.0;
+    private static final double FLEE_DIST_SQ = 10.0 * 10.0;
+    private static final double CRUISE_Y = 249.0;
+    private static final int AXE_SLOT = 0;     // slot 1
+    private static final int ROCKET_SLOT = 3;  // slot 4
 
     private Area current, lastFinished;
     private Vec3d flyTarget = Vec3d.ZERO, lastPos = Vec3d.ZERO;
+    private final Random rng = new Random();
+    private Vec3d aimOffset = Vec3d.ZERO;
+    private int delayTicks, pauseWalk;
+    private boolean climbed;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
     private final List<BlockPos> cache = new ArrayList<>();
@@ -55,18 +62,15 @@ public class Bot {
     private static boolean isRocket(ItemStack s) { return s.isOf(Items.FIREWORK_ROCKET); }
     private static boolean hasElytra(ClientPlayerEntity p) { return p.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA); }
 
-    private static boolean hotbarHas(ClientPlayerEntity p, Predicate<ItemStack> pr) {
-        for (int i = 0; i < 9; i++) if (pr.test(p.getInventory().getStack(i))) return true;
-        return false;
+    private static boolean slotHas(ClientPlayerEntity p, int slot, Predicate<ItemStack> pr) {
+        return pr.test(p.getInventory().getStack(slot));
     }
 
-    private static boolean select(ClientPlayerEntity p, Predicate<ItemStack> pr) {
+    private static boolean select(ClientPlayerEntity p, int slot, Predicate<ItemStack> pr) {
         PlayerInventory inv = p.getInventory();
-        if (pr.test(inv.getStack(inv.selectedSlot))) return true;
-        for (int i = 0; i < 9; i++) {
-            if (pr.test(inv.getStack(i))) { inv.selectedSlot = i; return true; }
-        }
-        return false;
+        if (!pr.test(inv.getStack(slot))) return false;
+        inv.selectedSlot = slot;
+        return true;
     }
 
     public void start(MinecraftClient mc) {
@@ -74,8 +78,8 @@ public class Bot {
         if (p == null || mc.world == null) return;
         if (GeneratorBotClient.AREAS.areas.isEmpty()) { msg(mc, "Najpierw zaznacz obszar klawiszem J (2 rogi)."); return; }
         if (!hasElytra(p)) { msg(mc, "Załóż elytrę (slot na klatkę piersiową)."); return; }
-        if (!hotbarHas(p, Bot::isAxe)) { msg(mc, "Połóż siekierę na pasku szybkiego dostępu."); return; }
-        if (!hotbarHas(p, Bot::isRocket)) { msg(mc, "Połóż fajerwerki na pasku szybkiego dostępu."); return; }
+        if (!slotHas(p, AXE_SLOT, Bot::isAxe)) { msg(mc, "Połóż siekierę w slocie 1 paska."); return; }
+        if (!slotHas(p, ROCKET_SLOT, Bot::isRocket)) { msg(mc, "Połóż fajerwerki w slocie 4 paska."); return; }
         current = null; lastFinished = null; mineTarget = null;
         cache.clear(); blacklist.clear();
         state = State.SEARCH; status = "Szukam obszaru";
@@ -185,48 +189,87 @@ public class Bot {
     private void startFlight(MinecraftClient mc, Area dest, boolean flee) {
         current = dest;
         flyTarget = dest.flyPoint();
-        state = State.FLY; flightTicks = 0; mineTarget = null;
+        state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false;
         status = flee ? "Gracz blisko – lecę do następnego generatora" : "Lecę do generatora";
         mc.interactionManager.cancelBlockBreaking();
         KeyBinding.unpressAll();
     }
 
     // ---------------------------------------------------------------- LOT
+    // Fazy: 1) start  2) wznoszenie pionowo do Y=249  3) przelot poziomo na Y=249
+    //       4) zniżanie ślizgiem nad cel  5) lądowanie. Przed ścianą bot unosi nos w górę.
 
     private void flight(MinecraftClient mc, ClientPlayerEntity p) {
+        ClientWorld w = mc.world;
         if (!hasElytra(p)) { fail(mc, "Brak elytry."); return; }
-        if (!select(p, Bot::isRocket)) { fail(mc, "Brak fajerwerków na pasku."); return; }
+        if (!select(p, ROCKET_SLOT, Bot::isRocket)) { fail(mc, "Brak fajerwerków w slocie 4."); return; }
         ItemStack el = p.getEquippedStack(EquipmentSlot.CHEST);
         if (el.getMaxDamage() - el.getDamage() <= 3) { fail(mc, "Elytra zaraz się zepsuje – stop."); return; }
-        if (++flightTicks > 2400) { fail(mc, "Lot trwa za długo – stop."); return; }
+        if (++flightTicks > 4800) { fail(mc, "Lot trwa za długo – stop."); return; }
 
         Vec3d pos = p.getPos();
         double distH = Math.hypot(flyTarget.x - pos.x, flyTarget.z - pos.z);
 
         if (!p.isGliding()) {
+            climbed = false;
             if (p.isOnGround() && (current.containsExpanded(pos, 6) || distH < 12)) {
                 mc.options.jumpKey.setPressed(false);
                 beginMine();
                 return;
             }
-            // start: skok, a w powietrzu "klikanie" skoku otwiera elytrę
             mc.options.jumpKey.setPressed(p.isOnGround() || ticks % 2 == 0);
-            turn(p, yawTo(pos, flyTarget), -20f, 40f);
+            status = "Start elytry";
             return;
         }
 
         mc.options.jumpKey.setPressed(false);
         Vec3d eye = p.getEyePos();
-        Vec3d aim = distH > 35 ? new Vec3d(flyTarget.x, flyTarget.y + 30, flyTarget.z) : flyTarget;
-        Vec3d d = aim.subtract(eye);
-        float ty = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
-        float tp = (float) -Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z)));
-        tp = MathHelper.clamp(tp, -45f, 35f);
+        double y = eye.y;
+        double speed = p.getVelocity().length();
+        if (!climbed && y >= CRUISE_Y - 4) climbed = true;
+
+        float ty = yawTo(pos, flyTarget);
+        float tp;
+        boolean boost = true;
+        double heightAbove = y - flyTarget.y;
+
+        if (!climbed) {
+            tp = -80f;                        // prawie pionowo w górę, dopóki nie dojdzie do Y=249
+            ty = p.getYaw();                  // bez zbaczania na boki, żeby nie trafić w ścianę
+            status = "Wznoszę się na Y=249";
+        } else {
+            double glideStart = Math.max(30, heightAbove * 2.6);
+            if (distH > glideStart) {
+                tp = MathHelper.clamp((float) ((y - CRUISE_Y) * 1.5), -30f, 20f); // trzymaj ~249
+                status = "Lecę na Y=249 do celu";
+            } else if (distH < 10 && heightAbove > 8) {
+                ty = p.getYaw() + 25f;        // krąży nad celem i spada w dół
+                tp = 20f; boost = false;
+                status = "Krążę nad celem";
+            } else {
+                double ang = Math.toDegrees(Math.atan2(-(flyTarget.y - y), Math.max(distH, 1)));
+                tp = MathHelper.clamp((float) ang, 8f, 38f);
+                boost = speed < 0.7;
+                status = "Schodzę do lądowania";
+            }
+        }
+
+        // ściana / skała przed nosem -> w górę (omijanie)
+        if (distH > 12) {
+            Vec3d look = p.getRotationVec(1f);
+            BlockHitResult wall = w.raycast(new RaycastContext(eye, eye.add(look.multiply(16)),
+                    RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, p));
+            if (wall.getType() == HitResult.Type.BLOCK) {
+                tp = -55f; boost = true;
+                status = "Omijam przeszkodę górą";
+            }
+        }
+
         turn(p, ty, tp, 25f);
 
-        if (distH > 25 && p.getVelocity().length() < 1.2 && fireworkCd <= 0) {
+        if (boost && speed < (climbed ? 1.2 : 1.0) && fireworkCd <= 0) {
             mc.interactionManager.interactItem(p, Hand.MAIN_HAND);
-            fireworkCd = 15;
+            fireworkCd = 12;
         }
     }
 
@@ -243,13 +286,24 @@ public class Bot {
 
     // ------------------------------------------------------------- KOPANIE
 
+    private double rnd(double r) { return (rng.nextDouble() * 2 - 1) * r; }
+
     private void mine(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
         if (current == null) { state = State.SEARCH; return; }
         if (p.isGliding()) return;
-        if (!select(p, Bot::isAxe)) { fail(mc, "Brak siekiery na pasku."); return; }
+        if (!select(p, AXE_SLOT, Bot::isAxe)) { fail(mc, "Brak siekiery w slocie 1."); return; }
 
         if (--rescanIn <= 0) { rescan(w); rescanIn = 100; }
-        if (mineTarget == null || !isTarget(w, mineTarget)) { mineTarget = chooseTarget(w, p); stuck = 0; }
+        if (mineTarget == null || !isTarget(w, mineTarget)) {
+            boolean hadTarget = mineTarget != null;
+            mineTarget = chooseTarget(w, p);
+            stuck = 0;
+            aimOffset = new Vec3d(rnd(0.28), rnd(0.28), rnd(0.28)); // celuje w losny punkt bloku, nie w środek
+            if (hadTarget) {
+                delayTicks = rng.nextInt(4);                                  // "reakcja" człowieka
+                if (rng.nextInt(30) == 0) delayTicks = 6 + rng.nextInt(10);   // czasem się rozejrzy
+            }
+        }
         if (mineTarget == null) {
             lastFinished = current;
             mc.interactionManager.cancelBlockBreaking();
@@ -260,7 +314,7 @@ public class Bot {
         }
 
         Vec3d eye = p.getEyePos();
-        Vec3d c = Vec3d.ofCenter(mineTarget);
+        Vec3d c = Vec3d.ofCenter(mineTarget).add(aimOffset);
         double dist = eye.distanceTo(c);
         BlockHitResult hr = w.raycast(new RaycastContext(eye, c, RaycastContext.ShapeType.OUTLINE,
                 RaycastContext.FluidHandling.NONE, p));
@@ -271,26 +325,61 @@ public class Bot {
             else if (w.getBlockState(hr.getBlockPos()).isIn(BlockTags.LEAVES)) { breakPos = hr.getBlockPos(); side = hr.getSide(); }
         }
 
+        // płynne, nieidealne obracanie głowy (ease + drobny szum) zamiast natychmiastowego "przyklejenia"
         Vec3d d = c.subtract(eye);
-        p.setYaw((float) Math.toDegrees(Math.atan2(-d.x, d.z)));
-        p.setPitch((float) -Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z))));
+        float ty = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
+        float tp = (float) -Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z)));
+        float dyaw = MathHelper.wrapDegrees(ty - p.getYaw());
+        float dpitch = tp - p.getPitch();
+        float stepY = MathHelper.clamp(dyaw * 0.4f + (float) (rng.nextGaussian() * 0.4), -35f, 35f);
+        float stepP = MathHelper.clamp(dpitch * 0.4f + (float) (rng.nextGaussian() * 0.3), -25f, 25f);
+        p.setYaw(p.getYaw() + stepY);
+        p.setPitch(MathHelper.clamp(p.getPitch() + stepP, -90f, 90f));
+        boolean aimed = Math.abs(dyaw) < 10 && Math.abs(dpitch) < 10;
+
+        // czasem krótko przystaje, ale zwykle idzie
+        if (pauseWalk > 0) pauseWalk--;
+        else if (rng.nextInt(60) == 0) pauseWalk = 3 + rng.nextInt(6);
 
         if (breakPos != null) {
-            mc.options.forwardKey.setPressed(false);
+            boolean ahead = pauseWalk == 0 && safeAhead(w, p);
+            mc.options.forwardKey.setPressed(ahead);
             mc.options.sprintKey.setPressed(false);
-            mc.options.jumpKey.setPressed(false);
-            ((ClientPlayerInteractionManagerAccessor) mc.interactionManager).generatorbot$setBlockBreakingCooldown(0);
-            mc.interactionManager.updateBlockBreakingProgress(breakPos, side);
-            p.swingHand(Hand.MAIN_HAND);
+            mc.options.jumpKey.setPressed(ahead && p.isOnGround() && p.horizontalCollision
+                    && mineTarget.getY() > p.getY() + 1.0);
+            if (delayTicks > 0) {
+                delayTicks--;
+                status = "Rozgląda się";
+            } else if (aimed) {
+                // 0–2 ticki przerwy między blokami zamiast zawsze 0
+                ((ClientPlayerInteractionManagerAccessor) mc.interactionManager)
+                        .generatorbot$setBlockBreakingCooldown(rng.nextInt(3));
+                mc.interactionManager.updateBlockBreakingProgress(breakPos, side);
+                p.swingHand(Hand.MAIN_HAND);
+                status = "Kopię idąc (" + cache.size() + " bloków w obszarze)";
+            } else {
+                status = "Celuje";
+            }
             stuck = 0; walkTicks = 0;
             lastPos = p.getPos();
-            status = "Kopię (" + cache.size() + " bloków w obszarze)";
         } else {
             mc.interactionManager.cancelBlockBreaking();
             walk(mc, p, c);
             if (++walkTicks % 15 == 0) mineTarget = null; // przelicz cel
             status = "Podchodzę do drewna";
         }
+    }
+
+    /** Nie wchodź w przepaść: musi być grunt w ciągu 3 bloków pod miejscem tuż przed botem. */
+    private boolean safeAhead(ClientWorld w, ClientPlayerEntity p) {
+        double yaw = Math.toRadians(p.getYaw());
+        double fx = p.getX() - Math.sin(yaw) * 0.9;
+        double fz = p.getZ() + Math.cos(yaw) * 0.9;
+        BlockPos base = BlockPos.ofFloored(fx, p.getY() - 0.5, fz);
+        for (int i = 0; i < 3; i++) {
+            if (!w.getBlockState(base.down(i)).isAir()) return true;
+        }
+        return false;
     }
 
     private void walk(MinecraftClient mc, ClientPlayerEntity p, Vec3d t) {
