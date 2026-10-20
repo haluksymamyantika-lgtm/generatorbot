@@ -25,8 +25,10 @@ public class AreaRenderer {
         if (ms == null || vcp == null) return;
 
         List<Box> boxes = new ArrayList<>();
-        for (AreaManager.Area a : am.areas) boxes.add(a.box().expand(0.003));
-        if (am.pending != null) boxes.add(new Box(am.pending).expand(0.003));
+        List<float[]> cols = new ArrayList<>();
+        float[] RED = {1f, 0.05f, 0.05f}, BLUE = {0.15f, 0.4f, 1f};
+        for (AreaManager.Area a : am.areas) { boxes.add(a.box().expand(0.003)); cols.add(a.visited ? BLUE : RED); }
+        if (am.pending != null) { boxes.add(new Box(am.pending).expand(0.003)); cols.add(RED); }
 
         Vec3d cam = ctx.camera().getPos();
         ms.push();
@@ -34,11 +36,11 @@ public class AreaRenderer {
         Matrix4f mt = ms.peek().getPositionMatrix();
 
         VertexConsumer fill = vcp.getBuffer(RenderLayer.getDebugFilledBox());
-        for (Box b : boxes) fill(fill, mt, b);
+        for (int i = 0; i < boxes.size(); i++) fill(fill, mt, boxes.get(i), cols.get(i));
         if (vcp instanceof VertexConsumerProvider.Immediate imm) imm.draw(RenderLayer.getDebugFilledBox());
 
         VertexConsumer lines = vcp.getBuffer(RenderLayer.getLines());
-        for (Box b : boxes) outline(lines, ms.peek(), b);
+        for (int i = 0; i < boxes.size(); i++) outline(lines, ms.peek(), boxes.get(i), cols.get(i));
         if (vcp instanceof VertexConsumerProvider.Immediate imm) imm.draw(RenderLayer.getLines());
 
         ms.pop();
@@ -50,15 +52,15 @@ public class AreaRenderer {
         return new float[][]{{x1,y1,z1},{x2,y1,z1},{x2,y1,z2},{x1,y1,z2},{x1,y2,z1},{x2,y2,z1},{x2,y2,z2},{x1,y2,z2}};
     }
 
-    private static void fill(VertexConsumer c, Matrix4f mt, Box b) {
+    private static void fill(VertexConsumer c, Matrix4f mt, Box b, float[] col) {
         float[][] v = corners(b);
         for (int[] f : FACES) {
-            for (int k = 0; k < 4; k++) c.vertex(mt, v[f[k]][0], v[f[k]][1], v[f[k]][2]).color(1f, 0f, 0f, 0.22f);
-            for (int k = 3; k >= 0; k--) c.vertex(mt, v[f[k]][0], v[f[k]][1], v[f[k]][2]).color(1f, 0f, 0f, 0.22f);
+            for (int k = 0; k < 4; k++) c.vertex(mt, v[f[k]][0], v[f[k]][1], v[f[k]][2]).color(col[0], col[1], col[2], 0.22f);
+            for (int k = 3; k >= 0; k--) c.vertex(mt, v[f[k]][0], v[f[k]][1], v[f[k]][2]).color(col[0], col[1], col[2], 0.22f);
         }
     }
 
-    private static void outline(VertexConsumer c, MatrixStack.Entry e, Box b) {
+    private static void outline(VertexConsumer c, MatrixStack.Entry e, Box b, float[] col) {
         float[][] v = corners(b);
         Matrix4f mt = e.getPositionMatrix();
         for (int[] ed : EDGES) {
@@ -67,8 +69,8 @@ public class AreaRenderer {
             float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
             if (len == 0) continue;
             nx /= len; ny /= len; nz /= len;
-            c.vertex(mt, a[0], a[1], a[2]).color(1f, 0.1f, 0.1f, 1f).normal(e, nx, ny, nz);
-            c.vertex(mt, d[0], d[1], d[2]).color(1f, 0.1f, 0.1f, 1f).normal(e, nx, ny, nz);
+            c.vertex(mt, a[0], a[1], a[2]).color(col[0], col[1], col[2], 1f).normal(e, nx, ny, nz);
+            c.vertex(mt, d[0], d[1], d[2]).color(col[0], col[1], col[2], 1f).normal(e, nx, ny, nz);
         }
     }
 }
