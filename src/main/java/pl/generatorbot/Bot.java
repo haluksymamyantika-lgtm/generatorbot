@@ -59,6 +59,7 @@ public class Bot {
     private int equipCd;
     private boolean minedThisRound, toStation;
     private int rItem, rStep, rTimer, rTries, repairTicks;
+    private int shopAction, plusLeft, plusSlot;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
     private final List<BlockPos> cache = new ArrayList<>();
@@ -232,7 +233,7 @@ public class Bot {
             if (!p.isGliding() && slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) {
                 if (equipCd <= 0) {
                     mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
-                    equipCd = 8;
+                    equipCd = 20;
                 }
                 status = "Zakładam elytrę";
                 return;
@@ -334,7 +335,8 @@ public class Bot {
     private void nextRepairItem(MinecraftClient mc, ClientPlayerEntity p) {
         if (mc.currentScreen != null) p.closeHandledScreen();
         rItem++; rTries = 0; rTimer = 0;
-        if (rItem >= 2) finishRepair(mc); else rStep = 6;
+        if (rItem >= 2) { rStep = 10; rTimer = 0; shopAction = 1; plusLeft = 0; plusSlot = -1; status = "Sklep: wpisuję /sklep"; }
+        else rStep = 6;
     }
 
     private static void lookAt(ClientPlayerEntity p, Vec3d t) {
@@ -356,11 +358,110 @@ public class Bot {
         return best;
     }
 
+    private static int findByName(ScreenHandler h, String needle) {
+        int container = Math.max(0, h.slots.size() - 36);
+        for (int i = 0; i < container; i++) {
+            ItemStack st = h.getSlot(i).getStack();
+            if (st.isEmpty()) continue;
+            if (st.getName().getString().toLowerCase(Locale.ROOT).contains(needle)) return i;
+        }
+        return -1;
+    }
+
+    private static int findByItem(ScreenHandler h, net.minecraft.item.Item item) {
+        int container = Math.max(0, h.slots.size() - 36);
+        for (int i = 0; i < container; i++) if (h.getSlot(i).getStack().isOf(item)) return i;
+        return -1;
+    }
+
+    /** Gdy nie znajdzie przycisku: wypisuje na czacie sloty okna, żebym mógł dopasować nazwy. */
+    private void shopFail(MinecraftClient mc, ClientPlayerEntity p, String why, ScreenHandler h) {
+        msg(mc, "Sklep: " + why);
+        if (h != null) {
+            StringBuilder sb = new StringBuilder("Sloty okna: ");
+            int container = Math.max(0, h.slots.size() - 36);
+            for (int i = 0; i < container; i++) {
+                ItemStack st = h.getSlot(i).getStack();
+                if (!st.isEmpty()) sb.append(i).append("=").append(st.getName().getString()).append(" | ");
+            }
+            msg(mc, sb.toString());
+        }
+        if (mc.currentScreen != null) p.closeHandledScreen();
+        finishRepair(mc);
+    }
+
     private void repair(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
         rTimer++;
-        if (++repairTicks > 2400) { msg(mc, "Naprawa trwa za długo – pomijam."); if (mc.currentScreen != null) p.closeHandledScreen(); finishRepair(mc); return; }
+        if (++repairTicks > 6000) { msg(mc, "Naprawa trwa za długo – pomijam."); if (mc.currentScreen != null) p.closeHandledScreen(); finishRepair(mc); return; }
         int slot = rItem == 0 ? ELYTRA_SLOT : AXE_SLOT;
         Predicate<ItemStack> pr = rItem == 0 ? Bot::isElytraStack : Bot::isAxe;
+
+        // ---- SKLEP: /sklep -> Pieniądze -> Potrzebne przedmioty -> fajerwerki -> +32 -> Potwierdź ----
+        if (rStep == 10) {
+            if (rTimer < 15) return;
+            p.networkHandler.sendChatCommand("sklep"); // to samo co wpisanie /sklep i Enter
+            rStep = 11; rTimer = 0;
+            status = "Sklep: czekam na okno";
+            return;
+        }
+        if (rStep == 11) {
+            if (mc.currentScreen instanceof HandledScreen<?> && !(mc.currentScreen instanceof InventoryScreen)) {
+                if (rTimer >= 12) { rStep = 12; rTimer = 0; }
+                return;
+            }
+            if (rTimer > 100) shopFail(mc, p, "okno /sklep się nie otworzyło", null);
+            return;
+        }
+        if (rStep == 12) {
+            if (!(mc.currentScreen instanceof HandledScreen<?> hs)) {
+                if (rTimer > 120) shopFail(mc, p, "okno sklepu zniknęło", null);
+                return;
+            }
+            ScreenHandler h = hs.getScreenHandler();
+            int slot = -1; String label = "";
+            switch (shopAction) {
+                case 1 -> { slot = findByName(h, "pieni"); label = "Pieniądze (zielona moneta)"; }
+                case 2 -> { slot = findByName(h, "potrzebne"); label = "Potrzebne przedmioty (czerwona skrzynia)"; }
+                case 3 -> { slot = findByItem(h, Items.FIREWORK_ROCKET); label = "fajerwerki"; }
+                case 4 -> {
+                    label = "+32 (lub +16 dwa razy)";
+                    if (plusLeft > 0) slot = plusSlot;
+                    else {
+                        int a = findByName(h, "+32");
+                        if (a >= 0) { slot = a; plusSlot = a; plusLeft = 1; }
+                        else {
+                            int b = findByName(h, "+16");
+                            if (b >= 0) { slot = b; plusSlot = b; plusLeft = 2; }
+                        }
+                    }
+                }
+                case 5 -> { slot = findByName(h, "potwierd"); label = "Potwierdź (zielony ptaszek)"; }
+                default -> {}
+            }
+            if (slot < 0) {
+                if (rTimer > 100) shopFail(mc, p, "nie znalazłem przycisku: " + label, h);
+                return;
+            }
+            if (rTimer < 10) return; // poczekaj aż serwer wyświetli nowe okno
+            mc.interactionManager.clickSlot(h.syncId, slot, 0, SlotActionType.PICKUP, p);
+            if (shopAction == 4) plusLeft--;
+            status = "Sklep: klikam " + label;
+            rStep = 13; rTimer = 0;
+            return;
+        }
+        if (rStep == 13) {
+            if (rTimer >= 16) {
+                if (shopAction == 4 && plusLeft > 0) { rStep = 12; rTimer = 0; }
+                else { shopAction++; rStep = shopAction > 5 ? 14 : 12; rTimer = 0; }
+            }
+            return;
+        }
+        if (rStep == 14) {
+            if (rTimer < 14) return;
+            if (mc.currentScreen != null) p.closeHandledScreen();
+            finishRepair(mc);
+            return;
+        }
 
         if (rStep == 0) { // dojdź na dokładne koordynaty
             double dh = Math.hypot(STATION.x - p.getX(), STATION.z - p.getZ());
@@ -373,12 +474,12 @@ public class Bot {
             return;
         }
         if (rStep == 1) { // przedmiot do ręki
-            if (rTimer > 60) { msg(mc, "Nie mogę wziąć przedmiotu ze slotu " + (slot + 1) + " – pomijam."); nextRepairItem(mc, p); return; }
+            if (rTimer > 120) { msg(mc, "Nie mogę wziąć przedmiotu ze slotu " + (slot + 1) + " – pomijam."); nextRepairItem(mc, p); return; }
             if (!slotHas(p, slot, pr)) {
                 if (rItem == 0 && hasElytra(p)) { // elytra jest założona -> przenieś ją z powrotem do slotu 3
                     if (equipCd <= 0) {
                         mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
-                        equipCd = 8;
+                        equipCd = 20;
                     }
                     status = "Naprawa: biorę elytrę do ręki";
                     return;
@@ -392,6 +493,7 @@ public class Bot {
             return;
         }
         if (rStep == 2) { // jedno kliknięcie prawym
+            if (rTimer < 10) return;
             rTries++;
             BlockPos anvil = (rTries == 2) ? findAnvil(w, p) : null;
             if (anvil != null) {
@@ -415,7 +517,7 @@ public class Bot {
             return;
         }
         if (rStep == 4) { // klik w butelkę z expem
-            if (rTimer < 4) return; // serwer dosyła zawartość okna
+            if (rTimer < 12) return; // serwer dosyła zawartość okna
             if (!(mc.currentScreen instanceof HandledScreen<?> hs)) { rStep = 2; rTimer = 0; return; }
             ScreenHandler h = hs.getScreenHandler();
             int container = Math.max(0, h.slots.size() - 36);
@@ -431,12 +533,12 @@ public class Bot {
             return;
         }
         if (rStep == 5) { // zamknij okno
-            if (rTimer < 4) return;
+            if (rTimer < 10) return;
             nextRepairItem(mc, p);
             return;
         }
         if (rStep == 6) { // chwila przerwy przed kolejnym przedmiotem
-            if (rTimer >= 6) { rStep = 1; rTimer = 0; }
+            if (rTimer >= 20) { rStep = 1; rTimer = 0; }
         }
     }
 
@@ -505,7 +607,7 @@ public class Bot {
         boolean aimed = Math.abs(dyaw) < 20 && Math.abs(dpitch) < 20;
 
         if (breakPos != null) {
-            boolean ahead = safeAhead(w, p);
+            boolean ahead = true; // nie boi się wysokości – idzie dalej nawet bez gruntu pod nogami
             mc.options.forwardKey.setPressed(ahead);
             mc.options.sprintKey.setPressed(false);
             mc.options.jumpKey.setPressed(ahead && p.isOnGround() && p.horizontalCollision
