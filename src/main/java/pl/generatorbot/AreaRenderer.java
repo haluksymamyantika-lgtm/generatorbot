@@ -26,8 +26,8 @@ public class AreaRenderer {
 
         List<Box> boxes = new ArrayList<>();
         List<float[]> cols = new ArrayList<>();
-        float[] RED = {1f, 0.05f, 0.05f}, BLUE = {0.15f, 0.4f, 1f};
-        for (AreaManager.Area a : am.areas) { boxes.add(a.box().expand(0.003)); cols.add(a.visited ? BLUE : RED); }
+        float[] RED = {1f, 0.05f, 0.05f}, BLUE = {0.15f, 0.4f, 1f}, GRAY = {0.6f, 0.6f, 0.6f};
+        for (AreaManager.Area a : am.areas) { boxes.add(a.box().expand(0.003)); cols.add(!a.enabled ? GRAY : a.visited ? BLUE : RED); }
         if (am.pending != null) { boxes.add(new Box(am.pending).expand(0.003)); cols.add(RED); }
 
         Vec3d cam = ctx.camera().getPos();
