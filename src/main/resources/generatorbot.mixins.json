@@ -2,6 +2,11 @@
   "required": true,
   "package": "pl.generatorbot.mixin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["ClientPlayerInteractionManagerAccessor"],
-  "injectors": { "defaultRequire": 1 }
+  "client": [
+    "ClientPlayerInteractionManagerAccessor",
+    "HandledScreenAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }

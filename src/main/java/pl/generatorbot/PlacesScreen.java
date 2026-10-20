@@ -5,6 +5,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import pl.generatorbot.AreaManager.Area;
 
 import java.util.Collections;
@@ -37,14 +38,14 @@ public class PlacesScreen extends Screen {
             tf.setChangedListener(s -> a.name = s);
             addDrawableChild(tf);
 
-            addDrawableChild(ButtonWidget.builder(Text.literal(a.enabled ? "ON" : "OFF"), b -> {
+            addDrawableChild(ButtonWidget.builder(onOff(a.enabled), b -> {
                 a.enabled = !a.enabled;
-                b.setMessage(Text.literal(a.enabled ? "ON" : "OFF"));
+                b.setMessage(onOff(a.enabled));
             }).dimensions(x0 + 130, y, 36, 20).build());
 
-            addDrawableChild(ButtonWidget.builder(Text.literal(a.visited ? "Niebieski" : "Czerwony"), b -> {
+            addDrawableChild(ButtonWidget.builder(color(a.visited), b -> {
                 a.visited = !a.visited;
-                b.setMessage(Text.literal(a.visited ? "Niebieski" : "Czerwony"));
+                b.setMessage(color(a.visited));
             }).dimensions(x0 + 170, y, 74, 20).build());
 
             addDrawableChild(ButtonWidget.builder(Text.literal("^"), b -> {
@@ -78,6 +79,23 @@ public class PlacesScreen extends Screen {
                 client.setScreen(new BotScreen())).dimensions(x0 + 206, yb, 110, 20).build());
     }
 
+    private static Text onOff(boolean on) {
+        return Text.literal(on ? "ON" : "OFF").formatted(on ? Formatting.GREEN : Formatting.RED, Formatting.BOLD);
+    }
+
+    private static Text color(boolean visited) {
+        return Text.literal(visited ? "Niebieski" : "Czerwony").formatted(visited ? Formatting.AQUA : Formatting.RED);
+    }
+
+    @Override
+    public void renderBackground(DrawContext ctx, int mouseX, int mouseY, float delta) {
+        super.renderBackground(ctx, mouseX, mouseY, delta);
+        int x0 = width / 2 - 172, x1 = width / 2 + 172, y1 = 44 + PER_PAGE * 26 + 34;
+        ctx.fill(x0 - 1, 3, x1 + 1, y1 + 1, 0xFF3A7BD5);
+        ctx.fill(x0, 4, x1, y1, 0xE0101420);
+        ctx.fill(x0, 4, x1, 38, 0xFF1B2A4A);
+    }
+
     @Override
     public void removed() {
         GeneratorBotClient.AREAS.save();
@@ -88,9 +106,9 @@ public class PlacesScreen extends Screen {
         super.render(ctx, mouseX, mouseY, delta);
         int cx = width / 2;
         int pages = Math.max(1, (GeneratorBotClient.AREAS.areas.size() + PER_PAGE - 1) / PER_PAGE);
-        ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Miejsca  (strona " + (page + 1) + "/" + pages + ")"), cx, 12, 0xFFFFFF);
+        ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Miejsca  (strona " + (page + 1) + "/" + pages + ")").formatted(Formatting.GOLD, Formatting.BOLD), cx, 10, 0xFFFFFF);
         ctx.drawCenteredTextWithShadow(textRenderer,
-                Text.literal("Bot leci po kolei z góry na dół. ON = leci, OFF = pomija. ^ v = kolejność."), cx, 26, 0xAAAAAA);
+                Text.literal("Bot leci z góry na dół. ON = leci, OFF = pomija. ^ v = kolejność.").formatted(Formatting.GRAY), cx, 24, 0xFFFFFF);
     }
 
     @Override

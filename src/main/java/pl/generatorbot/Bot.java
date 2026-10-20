@@ -233,7 +233,7 @@ public class Bot {
             if (!p.isGliding() && slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) {
                 if (equipCd <= 0) {
                     mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
-                    equipCd = 20;
+                    equipCd = 40;
                 }
                 status = "Zakładam elytrę";
                 return;
@@ -258,6 +258,7 @@ public class Bot {
                 if (toStation) beginRepair(); else beginMine();
                 return;
             }
+            turn(p, yawTo(pos, flyTarget), -30f, 90f);   // od razu twarzą do celu
             mc.options.jumpKey.setPressed(p.isOnGround() || ticks % 2 == 0);
             status = "Start elytry";
             return;
@@ -276,8 +277,7 @@ public class Bot {
         double heightAbove = y - flyTarget.y;
 
         if (!climbed) {
-            tp = -80f;                        // prawie pionowo w górę, dopóki nie dojdzie do Y=240
-            ty = p.getYaw();                  // bez zbaczania na boki, żeby nie trafić w ścianę
+            tp = -55f;                        // ukośnie w górę, ale już w stronę celu (bez skręcania później)
             status = "Wznoszę się na Y=240";
         } else {
             // szybki, stromy nurkowaniem prosto w cel (bez delikatnego lądowania)
@@ -289,13 +289,13 @@ public class Bot {
                 diving = true; diveLocked = true;
                 double ang = Math.toDegrees(Math.atan2(-(flyTarget.y - y), Math.max(distH, 1)));
                 tp = MathHelper.clamp((float) ang, 10f, 80f);
-                boost = speed < 1.6;          // dopalaj fajerwerkami cały czas
+                boost = speed < 1.7;          // dopalaj fajerwerkami cały czas
                 status = "Nurkuję w cel";
             }
         }
 
         // ściana / skała przed nosem -> w górę (omijanie)
-        if (!diving && distH > 12) {
+        if (climbed && !diving && distH > 12) {
             Vec3d look = p.getRotationVec(1f);
             BlockHitResult wall = w.raycast(new RaycastContext(eye, eye.add(look.multiply(16)),
                     RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, p));
@@ -305,11 +305,11 @@ public class Bot {
             }
         }
 
-        turn(p, ty, tp, 25f);
+        turn(p, ty, tp, 60f);
 
-        if (boost && speed < (diving ? 1.6 : climbed ? 1.2 : 1.0) && fireworkCd <= 0) {
+        if (boost && speed < (diving ? 1.7 : 1.5) && fireworkCd <= 0) {
             mc.interactionManager.interactItem(p, Hand.MAIN_HAND);
-            fireworkCd = 12;
+            fireworkCd = 10;
         }
     }
 
@@ -419,7 +419,11 @@ public class Bot {
             }
             ScreenHandler h = hs.getScreenHandler();
             int sl = -1; String label = "";
-            switch (shopAction) {
+            boolean rec = !ShopRecorder.steps.isEmpty();
+            if (rec) {
+                int idx = shopAction - 1;
+                if (idx >= 0 && idx < ShopRecorder.steps.size()) { sl = ShopRecorder.steps.get(idx); label = "krok " + shopAction; }
+            } else switch (shopAction) {
                 case 1 -> { sl = findByName(h, "pieni"); label = "Pieniądze (zielona moneta)"; }
                 case 2 -> { sl = findByName(h, "potrzebne"); label = "Potrzebne przedmioty (czerwona skrzynia)"; }
                 case 3 -> { sl = findByItem(h, Items.FIREWORK_ROCKET); label = "fajerwerki"; }
@@ -442,7 +446,8 @@ public class Bot {
                 if (rTimer > 100) shopFail(mc, p, "nie znalazłem przycisku: " + label, h);
                 return;
             }
-            if (rTimer < 10) return; // poczekaj aż serwer wyświetli nowe okno
+            if (sl >= Math.max(0, h.slots.size() - 36)) { shopFail(mc, p, "zapisany slot nie pasuje do okna", h); return; }
+            if (rTimer < 14) return; // poczekaj aż serwer wyświetli nowe okno
             mc.interactionManager.clickSlot(h.syncId, sl, 0, SlotActionType.PICKUP, p);
             if (shopAction == 4) plusLeft--;
             status = "Sklep: klikam " + label;
@@ -450,9 +455,9 @@ public class Bot {
             return;
         }
         if (rStep == 13) {
-            if (rTimer >= 16) {
-                if (shopAction == 4 && plusLeft > 0) { rStep = 12; rTimer = 0; }
-                else { shopAction++; rStep = shopAction > 5 ? 14 : 12; rTimer = 0; }
+            if (rTimer >= 22) {
+                if (ShopRecorder.steps.isEmpty() && shopAction == 4 && plusLeft > 0) { rStep = 12; rTimer = 0; }
+                else { shopAction++; rStep = shopAction > (ShopRecorder.steps.isEmpty() ? 5 : ShopRecorder.steps.size()) ? 14 : 12; rTimer = 0; }
             }
             return;
         }
@@ -475,11 +480,12 @@ public class Bot {
         }
         if (rStep == 1) { // przedmiot do ręki
             if (rTimer > 120) { msg(mc, "Nie mogę wziąć przedmiotu ze slotu " + (slot + 1) + " – pomijam."); nextRepairItem(mc, p); return; }
+            if (rTimer < 15) return;
             if (!slotHas(p, slot, pr)) {
                 if (rItem == 0 && hasElytra(p)) { // elytra jest założona -> przenieś ją z powrotem do slotu 3
                     if (equipCd <= 0) {
                         mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
-                        equipCd = 20;
+                        equipCd = 40;
                     }
                     status = "Naprawa: biorę elytrę do ręki";
                     return;
@@ -493,7 +499,7 @@ public class Bot {
             return;
         }
         if (rStep == 2) { // jedno kliknięcie prawym
-            if (rTimer < 10) return;
+            if (rTimer < 25) return;
             rTries++;
             BlockPos anvil = (rTries == 2) ? findAnvil(w, p) : null;
             if (anvil != null) {
@@ -517,7 +523,7 @@ public class Bot {
             return;
         }
         if (rStep == 4) { // klik w butelkę z expem
-            if (rTimer < 12) return; // serwer dosyła zawartość okna
+            if (rTimer < 25) return; // serwer dosyła zawartość okna
             if (!(mc.currentScreen instanceof HandledScreen<?> hs)) { rStep = 2; rTimer = 0; return; }
             ScreenHandler h = hs.getScreenHandler();
             int container = Math.max(0, h.slots.size() - 36);
@@ -533,12 +539,12 @@ public class Bot {
             return;
         }
         if (rStep == 5) { // zamknij okno
-            if (rTimer < 10) return;
+            if (rTimer < 20) return;
             nextRepairItem(mc, p);
             return;
         }
         if (rStep == 6) { // chwila przerwy przed kolejnym przedmiotem
-            if (rTimer >= 20) { rStep = 1; rTimer = 0; }
+            if (rTimer >= 40) { rStep = 1; rTimer = 0; }
         }
     }
 
