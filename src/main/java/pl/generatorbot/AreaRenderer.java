@@ -1,6 +1,10 @@
 package pl.generatorbot;
 
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexConsumerProvider;
@@ -42,6 +46,28 @@ public class AreaRenderer {
         VertexConsumer lines = vcp.getBuffer(RenderLayer.getLines());
         for (int i = 0; i < boxes.size(); i++) outline(lines, ms.peek(), boxes.get(i), cols.get(i));
         if (vcp instanceof VertexConsumerProvider.Immediate imm) imm.draw(RenderLayer.getLines());
+
+        // duże nazwy nad miejscami (rosną z odległością, więc widać je z daleka, także przez bloki)
+        TextRenderer tr = MinecraftClient.getInstance().textRenderer;
+        for (int i = 0; i < am.areas.size(); i++) {
+            AreaManager.Area a = am.areas.get(i);
+            Vec3d c = new Vec3d((a.x1 + a.x2 + 1) / 2.0, a.y2 + 3.0, (a.z1 + a.z2 + 1) / 2.0);
+            double dist = c.distanceTo(cam);
+            if (dist > 500) continue;
+            Formatting col = !a.enabled ? Formatting.GRAY : a.visited ? Formatting.AQUA : Formatting.RED;
+            Text label = Text.literal((i + 1) + ". " + a.displayName(i)).formatted(col, Formatting.BOLD);
+            float s = (float) Math.max(0.08, dist * 0.018);
+            ms.push();
+            ms.translate(c.x, c.y, c.z);
+            ms.multiply(ctx.camera().getRotation());
+            ms.scale(-s, -s, s);
+            Matrix4f m = ms.peek().getPositionMatrix();
+            float w = tr.getWidth(label);
+            tr.draw(label, -w / 2f, 0f, 0xFFFFFFFF, false, m, vcp,
+                    TextRenderer.TextLayerType.SEE_THROUGH, 0x90000000, 0xF000F0);
+            ms.pop();
+        }
+        if (vcp instanceof VertexConsumerProvider.Immediate imm) imm.draw();
 
         ms.pop();
     }
