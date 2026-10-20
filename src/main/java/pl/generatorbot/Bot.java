@@ -3,6 +3,8 @@ package pl.generatorbot;
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
+import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.KeyBinding;
@@ -13,6 +15,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.registry.tag.ItemTags;
+import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
@@ -30,7 +33,7 @@ import java.util.*;
 import java.util.function.Predicate;
 
 public class Bot {
-    public enum State { STOPPED, SEARCH, WAIT, FLY, MINE, PAUSE }
+    public enum State { STOPPED, SEARCH, WAIT, FLY, MINE, PAUSE, REPAIR }
 
     public State state = State.STOPPED;
     public String status = "Zatrzymany";
@@ -44,6 +47,8 @@ public class Bot {
     private static final int AXE_SLOT = 0;     // slot 1
     private static final int ROCKET_SLOT = 3;  // slot 4
     private static final int ELYTRA_SLOT = 2;  // slot 3
+    /** Punkt z kowadłem: x -7, y 161, z 1 (środek bloku). Bot leci tu co rundę. */
+    private static final Vec3d STATION = new Vec3d(-6.5, 162.0, 1.5);
 
     private Area current, lastFinished;
     private Vec3d flyTarget = Vec3d.ZERO, lastPos = Vec3d.ZERO;
@@ -52,7 +57,8 @@ public class Bot {
     private int delayTicks, pauseWalk;
     private boolean climbed, diveLocked;
     private int equipCd;
-    private boolean minedThisRound;
+    private boolean minedThisRound, toStation;
+    private int rItem, rStep, rTimer, rTries, repairTicks;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
     private final List<BlockPos> cache = new ArrayList<>();
@@ -82,12 +88,15 @@ public class Bot {
         ClientPlayerEntity p = mc.player;
         if (p == null || mc.world == null) return;
         if (GeneratorBotClient.AREAS.areas.isEmpty()) { msg(mc, "Najpierw zaznacz obszar klawiszem J (2 rogi)."); return; }
+        boolean anyOn = false;
+        for (Area ar : GeneratorBotClient.AREAS.areas) if (ar.enabled) anyOn = true;
+        if (!anyOn) { msg(mc, "Wszystkie miejsca są wyłączone (OFF) w panelu Miejsca."); return; }
         if (!hasElytra(p) && !slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) { msg(mc, "Połóż elytrę w slocie 3 paska (bot sam ją założy)."); return; }
         if (!slotHas(p, AXE_SLOT, Bot::isAxe)) { msg(mc, "Połóż siekierę w slocie 1 paska."); return; }
         if (!slotHas(p, ROCKET_SLOT, Bot::isRocket)) { msg(mc, "Połóż fajerwerki w slocie 4 paska."); return; }
         for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false;
         minedThisRound = false;
-        current = null; lastFinished = null; mineTarget = null;
+        current = null; lastFinished = null; mineTarget = null; toStation = false;
         cache.clear(); blacklist.clear();
         state = State.SEARCH; status = "Szukam obszaru";
         msg(mc, "Bot włączony.");
@@ -109,44 +118,44 @@ public class Bot {
         ClientWorld w = mc.world;
         if (p == null || w == null || mc.interactionManager == null) { state = State.STOPPED; return; }
         if (!p.isAlive()) { stop(mc); return; }
-        if (mc.currentScreen != null) return;
+        if (mc.currentScreen != null && state != State.REPAIR) return;
         ticks++;
         if (fireworkCd > 0) fireworkCd--;
         if (equipCd > 0) equipCd--;
 
         boolean near = playerNear(w, p);
-        if (near && (state == State.MINE || state == State.SEARCH || state == State.WAIT || state == State.PAUSE)) {
-            Area dest = pickArea(w, p, current, true);
-            if (dest != null) {
-                startFlight(mc, dest, true);
-                return;
-            }
-            if (state != State.PAUSE) { mc.interactionManager.cancelBlockBreaking(); KeyBinding.unpressAll(); }
-            state = State.PAUSE; status = "Gracz w pobliżu – czekam";
+        if (near && state == State.MINE) {
+            // odlatuje -> to miejsce robi się niebieskie, bot leci do następnego z listy
+            if (current != null) current.visited = true;
+            mc.interactionManager.cancelBlockBreaking();
+            KeyBinding.unpressAll();
+            mineTarget = null;
+            state = State.SEARCH;
+            status = "Gracz blisko – lecę dalej";
             return;
         }
 
         switch (state) {
             case SEARCH -> {
-                Area next = pickArea(w, p, null, false);
-                if (next == null) {
-                    // wszystkie niebieskie (albo puste) -> nowa runda: wszystko znów na czerwono
-                    for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false;
-                    lastFinished = null;
-                    waitTicks = minedThisRound ? 20 : 100;
-                    minedThisRound = false;
-                    state = State.WAIT;
-                    status = "Nowa runda – generatory znów czerwone";
-                } else {
+                Area next = nextRouteArea(w);
+                if (next != null) {
                     current = next;
                     if (next.containsExpanded(p.getPos(), 3) && p.isOnGround()) beginMine();
                     else startFlight(mc, next, false);
+                } else if (!minedThisRound) {
+                    // nic nie było do kopania w całej rundzie – nie lataj na próżno do kowadła
+                    for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false;
+                    waitTicks = 100; state = State.WAIT;
+                    status = "Nic do kopania – czekam";
+                } else {
+                    goStation(mc); // koniec rundy -> naprawa u kowadła
                 }
             }
             case WAIT -> { if (--waitTicks <= 0) state = State.SEARCH; }
             case FLY -> flight(mc, p);
             case MINE -> mine(mc, p, w);
-            case PAUSE -> { if (!near) state = current != null ? State.MINE : State.SEARCH; }
+            case REPAIR -> repair(mc, p, w);
+            case PAUSE -> state = State.SEARCH;
             default -> {}
         }
     }
@@ -158,31 +167,14 @@ public class Bot {
         return false;
     }
 
-    /**
-     * Zwykły wybór: najbliższy CZERWONY generator, w którym coś zostało (puste czerwone od razu robią się niebieskie).
-     * Ucieczka: najbliższy czerwony, potem dowolny z drewnem, potem dowolny inny.
-     */
-    private Area pickArea(ClientWorld w, ClientPlayerEntity p, Area exclude, boolean flee) {
-        Area best = null; double bd = Double.MAX_VALUE;
+    /** Następne miejsce według KOLEJNOŚCI z panelu: włączone (ON) i jeszcze czerwone. Puste od razu niebieskie. */
+    private Area nextRouteArea(ClientWorld w) {
         for (Area a : GeneratorBotClient.AREAS.areas) {
-            if (a == exclude || a.visited) continue;
+            if (!a.enabled || a.visited) continue;
             if (!hasTargets(w, a)) { a.visited = true; continue; }
-            double d = a.center().squaredDistanceTo(p.getPos());
-            if (d < bd) { bd = d; best = a; }
+            return a;
         }
-        if (best != null || !flee) return best;
-        for (Area a : GeneratorBotClient.AREAS.areas) {
-            if (a == exclude || !hasTargets(w, a)) continue;
-            double d = a.center().squaredDistanceTo(p.getPos());
-            if (d < bd) { bd = d; best = a; }
-        }
-        if (best != null) return best;
-        for (Area a : GeneratorBotClient.AREAS.areas) {
-            if (a == exclude) continue;
-            double d = a.center().squaredDistanceTo(p.getPos());
-            if (d < bd) { bd = d; best = a; }
-        }
-        return best;
+        return null;
     }
 
     private boolean hasTargets(ClientWorld w, Area a) {
@@ -211,8 +203,20 @@ public class Bot {
         if (current != null && current != dest) current.visited = true; // odlatuje -> niebieski
         current = dest;
         flyTarget = dest.flyPoint();
+        toStation = false;
         state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false; diveLocked = false;
         status = flee ? "Gracz blisko – lecę do następnego generatora" : "Lecę do generatora";
+        mc.interactionManager.cancelBlockBreaking();
+        KeyBinding.unpressAll();
+    }
+
+    private void goStation(MinecraftClient mc) {
+        if (current != null) current.visited = true;
+        current = null;
+        toStation = true;
+        flyTarget = STATION;
+        state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false; diveLocked = false;
+        status = "Lecę do kowadła (naprawa)";
         mc.interactionManager.cancelBlockBreaking();
         KeyBinding.unpressAll();
     }
@@ -246,9 +250,11 @@ public class Bot {
 
         if (!p.isGliding()) {
             climbed = false; diveLocked = false;
-            if (p.isOnGround() && (current.containsExpanded(pos, 6) || distH < 12)) {
+            boolean arrived = toStation ? distH < 12
+                    : ((current != null && current.containsExpanded(pos, 6)) || distH < 12);
+            if (p.isOnGround() && arrived) {
                 mc.options.jumpKey.setPressed(false);
-                beginMine();
+                if (toStation) beginRepair(); else beginMine();
                 return;
             }
             mc.options.jumpKey.setPressed(p.isOnGround() || ticks % 2 == 0);
@@ -303,6 +309,134 @@ public class Bot {
         if (boost && speed < (diving ? 1.6 : climbed ? 1.2 : 1.0) && fireworkCd <= 0) {
             mc.interactionManager.interactItem(p, Hand.MAIN_HAND);
             fireworkCd = 12;
+        }
+    }
+
+    // ------------------------------------------------------------ NAPRAWA
+    // Co rundę: leci na kowadło, z elytrą (slot 3) w ręce klika PPM, w GUI klika butelkę z expem,
+    // potem to samo z siekierą (slot 1).
+
+    private void beginRepair() {
+        state = State.REPAIR; toStation = false;
+        rItem = 0; rStep = 0; rTimer = 0; rTries = 0; repairTicks = 0;
+        status = "Naprawa: idę do kowadła";
+    }
+
+    private void finishRepair(MinecraftClient mc) {
+        KeyBinding.unpressAll();
+        for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false; // nowa runda: wszystko znów czerwone
+        minedThisRound = false;
+        current = null;
+        waitTicks = 20; state = State.WAIT;
+        status = "Nowa runda";
+    }
+
+    private void nextRepairItem(MinecraftClient mc, ClientPlayerEntity p) {
+        if (mc.currentScreen != null) p.closeHandledScreen();
+        rItem++; rTries = 0; rTimer = 0;
+        if (rItem >= 2) finishRepair(mc); else rStep = 6;
+    }
+
+    private static void lookAt(ClientPlayerEntity p, Vec3d t) {
+        Vec3d d = t.subtract(p.getEyePos());
+        p.setYaw((float) Math.toDegrees(Math.atan2(-d.x, d.z)));
+        p.setPitch((float) -Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z))));
+    }
+
+    private BlockPos findAnvil(ClientWorld w, ClientPlayerEntity p) {
+        BlockPos base = p.getBlockPos();
+        BlockPos best = null; double bd = Double.MAX_VALUE;
+        for (int x = -4; x <= 4; x++) for (int y = -3; y <= 3; y++) for (int z = -4; z <= 4; z++) {
+            BlockPos b = base.add(x, y, z);
+            Block bl = w.getBlockState(b).getBlock();
+            if (bl != Blocks.ANVIL && bl != Blocks.CHIPPED_ANVIL && bl != Blocks.DAMAGED_ANVIL) continue;
+            double d = Vec3d.ofCenter(b).distanceTo(p.getEyePos());
+            if (d <= 4.4 && d < bd) { bd = d; best = b; }
+        }
+        return best;
+    }
+
+    private void repair(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
+        rTimer++;
+        if (++repairTicks > 2400) { msg(mc, "Naprawa trwa za długo – pomijam."); if (mc.currentScreen != null) p.closeHandledScreen(); finishRepair(mc); return; }
+        int slot = rItem == 0 ? ELYTRA_SLOT : AXE_SLOT;
+        Predicate<ItemStack> pr = rItem == 0 ? Bot::isElytraStack : Bot::isAxe;
+
+        if (rStep == 0) { // dojdź na dokładne koordynaty
+            double dh = Math.hypot(STATION.x - p.getX(), STATION.z - p.getZ());
+            if (dh < 1.0 || rTimer > 140) { KeyBinding.unpressAll(); rStep = 1; rTimer = 0; return; }
+            p.setYaw(yawTo(p.getPos(), new Vec3d(STATION.x, p.getY(), STATION.z)));
+            p.setPitch(10f);
+            mc.options.forwardKey.setPressed(true);
+            mc.options.jumpKey.setPressed(p.horizontalCollision && p.isOnGround());
+            status = "Naprawa: idę do kowadła";
+            return;
+        }
+        if (rStep == 1) { // przedmiot do ręki
+            if (rTimer > 60) { msg(mc, "Nie mogę wziąć przedmiotu ze slotu " + (slot + 1) + " – pomijam."); nextRepairItem(mc, p); return; }
+            if (!slotHas(p, slot, pr)) {
+                if (rItem == 0 && hasElytra(p)) { // elytra jest założona -> przenieś ją z powrotem do slotu 3
+                    if (equipCd <= 0) {
+                        mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
+                        equipCd = 8;
+                    }
+                    status = "Naprawa: biorę elytrę do ręki";
+                    return;
+                }
+                msg(mc, "Brak przedmiotu w slocie " + (slot + 1) + " – pomijam.");
+                nextRepairItem(mc, p);
+                return;
+            }
+            select(p, slot, pr);
+            rStep = 2; rTimer = 0;
+            return;
+        }
+        if (rStep == 2) { // jedno kliknięcie prawym
+            rTries++;
+            BlockPos anvil = (rTries == 2) ? findAnvil(w, p) : null;
+            if (anvil != null) {
+                Vec3d c = Vec3d.ofCenter(anvil);
+                lookAt(p, c);
+                mc.interactionManager.interactBlock(p, Hand.MAIN_HAND, new BlockHitResult(c, Direction.UP, anvil, false));
+            } else {
+                mc.interactionManager.interactItem(p, Hand.MAIN_HAND);
+            }
+            p.swingHand(Hand.MAIN_HAND);
+            rStep = 3; rTimer = 0;
+            status = "Naprawa: otwieram GUI";
+            return;
+        }
+        if (rStep == 3) { // czekaj na GUI
+            if (mc.currentScreen instanceof HandledScreen<?> && !(mc.currentScreen instanceof InventoryScreen)) { rStep = 4; rTimer = 0; return; }
+            if (rTimer > 25) {
+                if (rTries >= 3) { msg(mc, "GUI kowadła się nie otworzyło – pomijam."); nextRepairItem(mc, p); }
+                else { rStep = 2; rTimer = 0; }
+            }
+            return;
+        }
+        if (rStep == 4) { // klik w butelkę z expem
+            if (rTimer < 4) return; // serwer dosyła zawartość okna
+            if (!(mc.currentScreen instanceof HandledScreen<?> hs)) { rStep = 2; rTimer = 0; return; }
+            ScreenHandler h = hs.getScreenHandler();
+            int container = Math.max(0, h.slots.size() - 36);
+            int target = -1;
+            for (int i = 0; i < container; i++) {
+                if (h.getSlot(i).getStack().isOf(Items.EXPERIENCE_BOTTLE)) { target = i; break; }
+            }
+            if (target < 0 && container > 22) target = 22; // miejsce butelki na zrzucie (rząd 3, kolumna 5)
+            if (target < 0) { msg(mc, "Nie widzę butelki z expem w GUI – pomijam."); nextRepairItem(mc, p); return; }
+            mc.interactionManager.clickSlot(h.syncId, target, 0, SlotActionType.PICKUP, p);
+            rStep = 5; rTimer = 0;
+            status = "Naprawa: klikam butelkę";
+            return;
+        }
+        if (rStep == 5) { // zamknij okno
+            if (rTimer < 4) return;
+            nextRepairItem(mc, p);
+            return;
+        }
+        if (rStep == 6) { // chwila przerwy przed kolejnym przedmiotem
+            if (rTimer >= 6) { rStep = 1; rTimer = 0; }
         }
     }
 
@@ -376,16 +510,12 @@ public class Bot {
             mc.options.sprintKey.setPressed(false);
             mc.options.jumpKey.setPressed(ahead && p.isOnGround() && p.horizontalCollision
                     && mineTarget.getY() > p.getY() + 1.0);
-            if (aimed) {
-                // zero przerwy między blokami = tak samo szybko jak wcześniej
-                ((ClientPlayerInteractionManagerAccessor) mc.interactionManager)
-                        .generatorbot$setBlockBreakingCooldown(0);
-                mc.interactionManager.updateBlockBreakingProgress(breakPos, side);
-                p.swingHand(Hand.MAIN_HAND);
-                status = "Kopię idąc (" + cache.size() + " bloków w obszarze)";
-            } else {
-                status = "Celuje";
-            }
+            // 0 ticków przerwy: uderza w KAŻDYM ticku, obrót głowy tylko wygląda ludzko i niczego nie opóźnia
+            ((ClientPlayerInteractionManagerAccessor) mc.interactionManager)
+                    .generatorbot$setBlockBreakingCooldown(0);
+            mc.interactionManager.updateBlockBreakingProgress(breakPos, side);
+            p.swingHand(Hand.MAIN_HAND);
+            status = "Kopię idąc (" + cache.size() + " bloków w obszarze)";
             stuck = 0; walkTicks = 0;
             lastPos = p.getPos();
         } else {
