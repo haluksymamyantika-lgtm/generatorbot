@@ -16,7 +16,7 @@ public class BotScreen extends Screen {
 
     @Override
     protected void init() {
-        int cx = width / 2, y = height / 2 - 55;
+        int cx = width / 2, y = height / 2 - 75;
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Start"), b -> {
             GeneratorBotClient.BOT.start(client);
@@ -28,13 +28,20 @@ public class BotScreen extends Screen {
             close();
         }).dimensions(cx + 2, y, 98, 20).build());
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Wyczyść zaznaczone obszary"), b ->
-                GeneratorBotClient.AREAS.clear()).dimensions(cx - 100, y + 26, 200, 20).build());
+        addDrawableChild(ButtonWidget.builder(Text.literal("Miejsca: nazwy, kolejność, ON/OFF"), b ->
+                client.setScreen(new PlacesScreen())).dimensions(cx - 100, y + 26, 200, 20).build());
+
+        addDrawableChild(ButtonWidget.builder(Text.literal("Wszystkie na czerwono"), b -> {
+            for (AreaManager.Area a : GeneratorBotClient.AREAS.areas) a.visited = false;
+        }).dimensions(cx - 100, y + 52, 200, 20).build());
+
+        addDrawableChild(ButtonWidget.builder(Text.literal("Wyczyść wszystkie obszary"), b ->
+                GeneratorBotClient.AREAS.clear()).dimensions(cx - 100, y + 78, 200, 20).build());
 
         startKeyBtn = addDrawableChild(ButtonWidget.builder(Text.empty(), b -> { waiting = GeneratorBotClient.startKey; refresh(); })
-                .dimensions(cx - 100, y + 62, 200, 20).build());
+                .dimensions(cx - 100, y + 110, 200, 20).build());
         stopKeyBtn = addDrawableChild(ButtonWidget.builder(Text.empty(), b -> { waiting = GeneratorBotClient.stopKey; refresh(); })
-                .dimensions(cx - 100, y + 86, 200, 20).build());
+                .dimensions(cx - 100, y + 134, 200, 20).build());
         refresh();
     }
 
@@ -64,10 +71,10 @@ public class BotScreen extends Screen {
     @Override
     public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
         super.render(ctx, mouseX, mouseY, delta);
-        int cx = width / 2, y = height / 2 - 95;
+        int cx = width / 2, y = height / 2 - 112;
         ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("GeneratorBot"), cx, y, 0xFFFFFF);
         ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Status: " + GeneratorBotClient.BOT.status
-                + "  |  obszary: " + GeneratorBotClient.AREAS.areas.size()), cx, y + 12, 0xAAAAAA);
+                + "  |  miejsca: " + GeneratorBotClient.AREAS.areas.size()), cx, y + 12, 0xAAAAAA);
     }
 
     @Override
