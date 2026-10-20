@@ -20,6 +20,14 @@ public class AreaManager {
         public int x1, y1, z1, x2, y2, z2;
         /** false = czerwony (do odwiedzenia), true = niebieski (bot już tu był). Nie zapisuje się do pliku. */
         public transient boolean visited;
+        /** Nazwa nadana w panelu "Miejsca" (pusta = domyślna). */
+        public String name = "";
+        /** ON/OFF z panelu: wyłączone miejsce bot pomija. */
+        public boolean enabled = true;
+
+        public String displayName(int index) {
+            return (name == null || name.isBlank()) ? "Miejsce " + (index + 1) : name;
+        }
 
         public Area() {}
 
