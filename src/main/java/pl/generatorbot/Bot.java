@@ -418,32 +418,32 @@ public class Bot {
                 return;
             }
             ScreenHandler h = hs.getScreenHandler();
-            int slot = -1; String label = "";
+            int sl = -1; String label = "";
             switch (shopAction) {
-                case 1 -> { slot = findByName(h, "pieni"); label = "Pieniądze (zielona moneta)"; }
-                case 2 -> { slot = findByName(h, "potrzebne"); label = "Potrzebne przedmioty (czerwona skrzynia)"; }
-                case 3 -> { slot = findByItem(h, Items.FIREWORK_ROCKET); label = "fajerwerki"; }
+                case 1 -> { sl = findByName(h, "pieni"); label = "Pieniądze (zielona moneta)"; }
+                case 2 -> { sl = findByName(h, "potrzebne"); label = "Potrzebne przedmioty (czerwona skrzynia)"; }
+                case 3 -> { sl = findByItem(h, Items.FIREWORK_ROCKET); label = "fajerwerki"; }
                 case 4 -> {
                     label = "+32 (lub +16 dwa razy)";
-                    if (plusLeft > 0) slot = plusSlot;
+                    if (plusLeft > 0) sl = plusSlot;
                     else {
                         int a = findByName(h, "+32");
-                        if (a >= 0) { slot = a; plusSlot = a; plusLeft = 1; }
+                        if (a >= 0) { sl = a; plusSlot = a; plusLeft = 1; }
                         else {
                             int b = findByName(h, "+16");
-                            if (b >= 0) { slot = b; plusSlot = b; plusLeft = 2; }
+                            if (b >= 0) { sl = b; plusSlot = b; plusLeft = 2; }
                         }
                     }
                 }
-                case 5 -> { slot = findByName(h, "potwierd"); label = "Potwierdź (zielony ptaszek)"; }
+                case 5 -> { sl = findByName(h, "potwierd"); label = "Potwierdź (zielony ptaszek)"; }
                 default -> {}
             }
-            if (slot < 0) {
+            if (sl < 0) {
                 if (rTimer > 100) shopFail(mc, p, "nie znalazłem przycisku: " + label, h);
                 return;
             }
             if (rTimer < 10) return; // poczekaj aż serwer wyświetli nowe okno
-            mc.interactionManager.clickSlot(h.syncId, slot, 0, SlotActionType.PICKUP, p);
+            mc.interactionManager.clickSlot(h.syncId, sl, 0, SlotActionType.PICKUP, p);
             if (shopAction == 4) plusLeft--;
             status = "Sklep: klikam " + label;
             rStep = 13; rTimer = 0;
