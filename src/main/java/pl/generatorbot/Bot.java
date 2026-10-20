@@ -1,4 +1,3 @@
-package pl.generatorbot;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
@@ -52,6 +51,7 @@ public class Bot {
     private int delayTicks, pauseWalk;
     private boolean climbed, diveLocked;
     private int equipCd;
+    private boolean minedThisRound;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
     private final List<BlockPos> cache = new ArrayList<>();
@@ -84,6 +84,8 @@ public class Bot {
         if (!hasElytra(p) && !slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) { msg(mc, "Połóż elytrę w slocie 3 paska (bot sam ją założy)."); return; }
         if (!slotHas(p, AXE_SLOT, Bot::isAxe)) { msg(mc, "Połóż siekierę w slocie 1 paska."); return; }
         if (!slotHas(p, ROCKET_SLOT, Bot::isRocket)) { msg(mc, "Połóż fajerwerki w slocie 4 paska."); return; }
+        for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false;
+        minedThisRound = false;
         current = null; lastFinished = null; mineTarget = null;
         cache.clear(); blacklist.clear();
         state = State.SEARCH; status = "Szukam obszaru";
@@ -127,8 +129,13 @@ public class Bot {
             case SEARCH -> {
                 Area next = pickArea(w, p, null, false);
                 if (next == null) {
-                    lastFinished = null; waitTicks = 100; state = State.WAIT;
-                    status = "Nic do kopania – czekam";
+                    // wszystkie niebieskie (albo puste) -> nowa runda: wszystko znów na czerwono
+                    for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false;
+                    lastFinished = null;
+                    waitTicks = minedThisRound ? 20 : 100;
+                    minedThisRound = false;
+                    state = State.WAIT;
+                    status = "Nowa runda – generatory znów czerwone";
                 } else {
                     current = next;
                     if (next.containsExpanded(p.getPos(), 3) && p.isOnGround()) beginMine();
@@ -150,21 +157,29 @@ public class Bot {
         return false;
     }
 
+    /**
+     * Zwykły wybór: najbliższy CZERWONY generator, w którym coś zostało (puste czerwone od razu robią się niebieskie).
+     * Ucieczka: najbliższy czerwony, potem dowolny z drewnem, potem dowolny inny.
+     */
     private Area pickArea(ClientWorld w, ClientPlayerEntity p, Area exclude, boolean flee) {
         Area best = null; double bd = Double.MAX_VALUE;
         for (Area a : GeneratorBotClient.AREAS.areas) {
-            if (a == exclude) continue;
-            if (!flee && a == lastFinished) continue;
-            if (!hasTargets(w, a)) continue;
+            if (a == exclude || a.visited) continue;
+            if (!hasTargets(w, a)) { a.visited = true; continue; }
             double d = a.center().squaredDistanceTo(p.getPos());
             if (d < bd) { bd = d; best = a; }
         }
-        if (best == null && flee) {
-            for (Area a : GeneratorBotClient.AREAS.areas) {
-                if (a == exclude) continue;
-                double d = a.center().squaredDistanceTo(p.getPos());
-                if (d < bd) { bd = d; best = a; }
-            }
+        if (best != null || !flee) return best;
+        for (Area a : GeneratorBotClient.AREAS.areas) {
+            if (a == exclude || !hasTargets(w, a)) continue;
+            double d = a.center().squaredDistanceTo(p.getPos());
+            if (d < bd) { bd = d; best = a; }
+        }
+        if (best != null) return best;
+        for (Area a : GeneratorBotClient.AREAS.areas) {
+            if (a == exclude) continue;
+            double d = a.center().squaredDistanceTo(p.getPos());
+            if (d < bd) { bd = d; best = a; }
         }
         return best;
     }
@@ -187,11 +202,12 @@ public class Bot {
     }
 
     private void beginMine() {
-        state = State.MINE; status = "Kopię";
+        state = State.MINE; status = "Kopię"; minedThisRound = true;
         cache.clear(); rescanIn = 0; mineTarget = null; stuck = 0; walkTicks = 0;
     }
 
     private void startFlight(MinecraftClient mc, Area dest, boolean flee) {
+        if (current != null && current != dest) current.visited = true; // odlatuje -> niebieski
         current = dest;
         flyTarget = dest.flyPoint();
         state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false; diveLocked = false;
@@ -302,6 +318,8 @@ public class Bot {
 
     // ------------------------------------------------------------- KOPANIE
 
+    private static double clamp3(double v) { return Math.max(-0.35, Math.min(0.35, v)); }
+
     private double rnd(double r) { return (rng.nextDouble() * 2 - 1) * r; }
 
     private void mine(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
@@ -314,10 +332,11 @@ public class Bot {
             boolean hadTarget = mineTarget != null;
             mineTarget = chooseTarget(w, p);
             stuck = 0;
-            aimOffset = Vec3d.ZERO;   // jak Baritone: celuje w środek bloku, bez opóźnień
+            aimOffset = new Vec3d(rnd(0.3), rnd(0.3), rnd(0.3)); // za każdym razem inny punkt bloku
         }
         if (mineTarget == null) {
             lastFinished = current;
+            current.visited = true;
             mc.interactionManager.cancelBlockBreaking();
             KeyBinding.unpressAll();
             cache.clear();
@@ -337,10 +356,18 @@ public class Bot {
             else if (w.getBlockState(hr.getBlockPos()).isIn(BlockTags.LEAVES)) { breakPos = hr.getBlockPos(); side = hr.getSide(); }
         }
 
-        // jak Baritone: natychmiast patrzy na blok
+        // jak człowiek: szybki, ale płynny obrót z lekkim drżeniem ręki (bez dodatkowych opóźnień)
+        aimOffset = new Vec3d(clamp3(aimOffset.x + rnd(0.04)), clamp3(aimOffset.y + rnd(0.04)), clamp3(aimOffset.z + rnd(0.04)));
         Vec3d d = c.subtract(eye);
-        p.setYaw((float) Math.toDegrees(Math.atan2(-d.x, d.z)));
-        p.setPitch((float) -Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z))));
+        float ty = (float) Math.toDegrees(Math.atan2(-d.x, d.z));
+        float tp = (float) -Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z)));
+        float dyaw = MathHelper.wrapDegrees(ty - p.getYaw());
+        float dpitch = tp - p.getPitch();
+        float stepY = MathHelper.clamp(dyaw * 0.6f + (float) (rng.nextGaussian() * 0.35), -60f, 60f);
+        float stepP = MathHelper.clamp(dpitch * 0.6f + (float) (rng.nextGaussian() * 0.3), -40f, 40f);
+        p.setYaw(p.getYaw() + stepY);
+        p.setPitch(MathHelper.clamp(p.getPitch() + stepP, -90f, 90f));
+        boolean aimed = Math.abs(dyaw) < 20 && Math.abs(dpitch) < 20;
 
         if (breakPos != null) {
             boolean ahead = safeAhead(w, p);
@@ -348,12 +375,16 @@ public class Bot {
             mc.options.sprintKey.setPressed(false);
             mc.options.jumpKey.setPressed(ahead && p.isOnGround() && p.horizontalCollision
                     && mineTarget.getY() > p.getY() + 1.0);
-            // zero przerwy między blokami: kopie non stop, idąc do przodu
-            ((ClientPlayerInteractionManagerAccessor) mc.interactionManager)
-                    .generatorbot$setBlockBreakingCooldown(0);
-            mc.interactionManager.updateBlockBreakingProgress(breakPos, side);
-            p.swingHand(Hand.MAIN_HAND);
-            status = "Kopię idąc (" + cache.size() + " bloków w obszarze)";
+            if (aimed) {
+                // zero przerwy między blokami = tak samo szybko jak wcześniej
+                ((ClientPlayerInteractionManagerAccessor) mc.interactionManager)
+                        .generatorbot$setBlockBreakingCooldown(0);
+                mc.interactionManager.updateBlockBreakingProgress(breakPos, side);
+                p.swingHand(Hand.MAIN_HAND);
+                status = "Kopię idąc (" + cache.size() + " bloków w obszarze)";
+            } else {
+                status = "Celuje";
+            }
             stuck = 0; walkTicks = 0;
             lastPos = p.getPos();
         } else {
