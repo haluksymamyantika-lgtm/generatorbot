@@ -47,6 +47,9 @@ public class Bot {
     private static final int AXE_SLOT = 0;     // slot 1
     private static final int ROCKET_SLOT = 3;  // slot 4
     private static final int ELYTRA_SLOT = 2;  // slot 3
+    private static final int SWORD_SLOT = 1;   // slot 2
+    /** Kolejność naprawy: miecz (slot 2), elytra (slot 3), siekiera (slot 1). */
+    private static final int[] REPAIR_ORDER = {SWORD_SLOT, ELYTRA_SLOT, AXE_SLOT};
     /** Punkt z kowadłem: x -7, y 161, z 1 (środek bloku). Bot leci tu co rundę. */
     private static final Vec3d STATION = new Vec3d(-6.5, 162.0, 1.5);
 
@@ -70,6 +73,7 @@ public class Bot {
     }
 
     private static boolean isAxe(ItemStack s) { return s.isIn(ItemTags.AXES); }
+    private static boolean isSword(ItemStack s) { return s.isIn(ItemTags.SWORDS); }
     private static boolean isElytraStack(ItemStack s) { return s.isOf(Items.ELYTRA); }
     private static boolean isRocket(ItemStack s) { return s.isOf(Items.FIREWORK_ROCKET); }
     private static boolean hasElytra(ClientPlayerEntity p) { return p.getEquippedStack(EquipmentSlot.CHEST).isOf(Items.ELYTRA); }
@@ -335,7 +339,7 @@ public class Bot {
     private void nextRepairItem(MinecraftClient mc, ClientPlayerEntity p) {
         if (mc.currentScreen != null) p.closeHandledScreen();
         rItem++; rTries = 0; rTimer = 0;
-        if (rItem >= 2) { rStep = 10; rTimer = 0; shopAction = 1; plusLeft = 0; plusSlot = -1; status = "Sklep: wpisuję /sklep"; }
+        if (rItem >= REPAIR_ORDER.length) { rStep = 10; rTimer = 0; shopAction = 1; plusLeft = 0; plusSlot = -1; status = "Sklep: wpisuję /sklep"; }
         else rStep = 6;
     }
 
@@ -393,8 +397,8 @@ public class Bot {
     private void repair(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
         rTimer++;
         if (++repairTicks > 6000) { msg(mc, "Naprawa trwa za długo – pomijam."); if (mc.currentScreen != null) p.closeHandledScreen(); finishRepair(mc); return; }
-        int slot = rItem == 0 ? ELYTRA_SLOT : AXE_SLOT;
-        Predicate<ItemStack> pr = rItem == 0 ? Bot::isElytraStack : Bot::isAxe;
+        int slot = REPAIR_ORDER[Math.min(rItem, REPAIR_ORDER.length - 1)];
+        Predicate<ItemStack> pr = slot == SWORD_SLOT ? Bot::isSword : slot == ELYTRA_SLOT ? Bot::isElytraStack : Bot::isAxe;
 
         // ---- SKLEP: /sklep -> Pieniądze -> Potrzebne przedmioty -> fajerwerki -> +32 -> Potwierdź ----
         if (rStep == 10) {
@@ -482,7 +486,7 @@ public class Bot {
             if (rTimer > 120) { msg(mc, "Nie mogę wziąć przedmiotu ze slotu " + (slot + 1) + " – pomijam."); nextRepairItem(mc, p); return; }
             if (rTimer < 15) return;
             if (!slotHas(p, slot, pr)) {
-                if (rItem == 0 && hasElytra(p)) { // elytra jest założona -> przenieś ją z powrotem do slotu 3
+                if (slot == ELYTRA_SLOT && hasElytra(p)) { // elytra jest założona -> przenieś ją z powrotem do slotu 3
                     if (equipCd <= 0) {
                         mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
                         equipCd = 40;
