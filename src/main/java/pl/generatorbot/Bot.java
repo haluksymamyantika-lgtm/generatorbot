@@ -48,7 +48,7 @@ public class Bot {
     private final Random rng = new Random();
     private Vec3d aimOffset = Vec3d.ZERO;
     private int delayTicks, pauseWalk;
-    private boolean climbed;
+    private boolean climbed, diveLocked;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
     private final List<BlockPos> cache = new ArrayList<>();
@@ -189,7 +189,7 @@ public class Bot {
     private void startFlight(MinecraftClient mc, Area dest, boolean flee) {
         current = dest;
         flyTarget = dest.flyPoint();
-        state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false;
+        state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false; diveLocked = false;
         status = flee ? "Gracz blisko – lecę do następnego generatora" : "Lecę do generatora";
         mc.interactionManager.cancelBlockBreaking();
         KeyBinding.unpressAll();
@@ -211,7 +211,7 @@ public class Bot {
         double distH = Math.hypot(flyTarget.x - pos.x, flyTarget.z - pos.z);
 
         if (!p.isGliding()) {
-            climbed = false;
+            climbed = false; diveLocked = false;
             if (p.isOnGround() && (current.containsExpanded(pos, 6) || distH < 12)) {
                 mc.options.jumpKey.setPressed(false);
                 beginMine();
@@ -231,6 +231,7 @@ public class Bot {
         float ty = yawTo(pos, flyTarget);
         float tp;
         boolean boost = true;
+        boolean diving = false;
         double heightAbove = y - flyTarget.y;
 
         if (!climbed) {
@@ -238,24 +239,22 @@ public class Bot {
             ty = p.getYaw();                  // bez zbaczania na boki, żeby nie trafić w ścianę
             status = "Wznoszę się na Y=249";
         } else {
-            double glideStart = Math.max(30, heightAbove * 2.6);
-            if (distH > glideStart) {
+            // szybki, stromy nurkowaniem prosto w cel (bez delikatnego lądowania)
+            double diveStart = Math.max(20, heightAbove * 0.9);
+            if (distH > diveStart && !diveLocked) {
                 tp = MathHelper.clamp((float) ((y - CRUISE_Y) * 1.5), -30f, 20f); // trzymaj ~249
                 status = "Lecę na Y=249 do celu";
-            } else if (distH < 10 && heightAbove > 8) {
-                ty = p.getYaw() + 25f;        // krąży nad celem i spada w dół
-                tp = 20f; boost = false;
-                status = "Krążę nad celem";
             } else {
+                diving = true; diveLocked = true;
                 double ang = Math.toDegrees(Math.atan2(-(flyTarget.y - y), Math.max(distH, 1)));
-                tp = MathHelper.clamp((float) ang, 8f, 38f);
-                boost = speed < 0.7;
-                status = "Schodzę do lądowania";
+                tp = MathHelper.clamp((float) ang, 10f, 80f);
+                boost = speed < 1.6;          // dopalaj fajerwerkami cały czas
+                status = "Nurkuję w cel";
             }
         }
 
         // ściana / skała przed nosem -> w górę (omijanie)
-        if (distH > 12) {
+        if (!diving && distH > 12) {
             Vec3d look = p.getRotationVec(1f);
             BlockHitResult wall = w.raycast(new RaycastContext(eye, eye.add(look.multiply(16)),
                     RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, p));
@@ -267,7 +266,7 @@ public class Bot {
 
         turn(p, ty, tp, 25f);
 
-        if (boost && speed < (climbed ? 1.2 : 1.0) && fireworkCd <= 0) {
+        if (boost && speed < (diving ? 1.6 : climbed ? 1.2 : 1.0) && fireworkCd <= 0) {
             mc.interactionManager.interactItem(p, Hand.MAIN_HAND);
             fireworkCd = 12;
         }
