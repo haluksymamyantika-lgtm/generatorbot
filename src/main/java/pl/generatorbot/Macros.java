@@ -4,6 +4,8 @@ import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.sound.PositionedSoundInstance;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
@@ -41,7 +43,9 @@ public class Macros {
     private static final Map<String, List<Step>> DATA = new HashMap<>();
     public static String recording;
     private static int sinceLast, lastSelected = -1;
-    private static long lastClickMs, lastBlockMs;
+    private static long lastClickMs, lastKeyMs, lastBlockMs;
+    private static boolean real;   // czy nagrano coś poza samym wyborem slotu
+    private static int idle;       // ticki bez okna i bez nowych kroków
 
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("generatorbot_macros.json");
     private static final Gson GSON = new Gson();
@@ -62,6 +66,12 @@ public class Macros {
         try { Files.writeString(FILE, GSON.toJson(DATA)); } catch (Exception ignored) {}
     }
 
+    private static void beep(MinecraftClient mc) {
+        try {
+            mc.getSoundManager().play(PositionedSoundInstance.master(SoundEvents.BLOCK_NOTE_BLOCK_PLING, 1.6f));
+        } catch (Exception ignored) {}
+    }
+
     public static List<Step> get(String key) { return DATA.getOrDefault(key, Collections.emptyList()); }
     public static boolean has(String key) { return !get(key).isEmpty(); }
     public static int count(String key) { return get(key).size(); }
@@ -76,14 +86,14 @@ public class Macros {
         if (mc.player == null) return;
         DATA.put(key, new ArrayList<>());
         recording = key;
-        sinceLast = 0;
+        sinceLast = 0; idle = 0; real = false;
         lastSelected = mc.player.getInventory().selectedSlot;
         Step s = new Step();
         s.type = "SELECT"; s.a = lastSelected;
         DATA.get(key).add(s);
         int idx = Arrays.asList(KEYS).indexOf(key);
         Bot.msg(mc, "NAGRYWANIE: " + TITLES[idx] + ". " + HINTS[idx]);
-        Bot.msg(mc, "Gdy skończysz: naciśnij L → zakładka Nagrania → Zakończ.");
+        Bot.msg(mc, "Gdy skończysz: przestań klikać – po 2 sekundach nagranie zapisze się samo (usłyszysz piknięcie) (albo L → Nagrania → Zakończ).");
     }
 
     public static void stop(MinecraftClient mc) {
@@ -92,9 +102,12 @@ public class Macros {
         recording = null;
         save();
         Bot.msg(mc, "Zapisano nagranie (" + count(k) + " kroków).");
+        beep(mc);
     }
 
     private static void add(MinecraftClient mc, Step st, String info) {
+        if (!"SELECT".equals(st.type)) real = true;
+        idle = 0;
         st.delay = sinceLast;
         sinceLast = 0;
         List<Step> l = DATA.computeIfAbsent(recording, k -> new ArrayList<>());
@@ -114,6 +127,8 @@ public class Macros {
                 add(mc, s, "wybrany slot " + (sel + 1));
             }
         }
+        // 2 sekundy bez żadnego kliknięcia = nagranie zapisuje się samo (z piknięciem)
+        if (real && ++idle > 40) stop(mc);
     }
 
     public static void onSlotClick(MinecraftClient mc, HandledScreen<?> hs, int button) {
@@ -132,6 +147,9 @@ public class Macros {
     public static void onKey(MinecraftClient mc, HandledScreen<?> hs, int key) {
         if (recording == null) return;
         if (key < GLFW.GLFW_KEY_1 || key > GLFW.GLFW_KEY_9) return;
+        long now = System.currentTimeMillis();
+        if (now - lastKeyMs < 60) return;
+        lastKeyMs = now;
         Slot s = ((HandledScreenAccessor) hs).generatorbot$getFocusedSlot();
         if (s == null) return;
         Step st = new Step();
