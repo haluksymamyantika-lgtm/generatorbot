@@ -64,6 +64,7 @@ public class Bot {
     private int rItem, rStep, rTimer, rTries, repairTicks;
     private int shopAction, plusLeft, plusSlot, restartIn, equipTries;
     private MacroPlayer player;
+    private boolean macroFailed;
     private boolean rMacroDone;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
@@ -103,7 +104,7 @@ public class Bot {
         if (!slotHas(p, ROCKET_SLOT, Bot::isRocket)) { msg(mc, "Połóż fajerwerki w slocie 4 paska."); return; }
         for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false;
         minedThisRound = false;
-        player = null; equipTries = 0;
+        player = null; equipTries = 0; macroFailed = false;
         current = null; lastFinished = null; mineTarget = null; toStation = false;
         cache.clear(); blacklist.clear();
         state = State.SEARCH; status = "Szukam obszaru";
@@ -239,11 +240,17 @@ public class Bot {
     private void flight(MinecraftClient mc, ClientPlayerEntity p) {
         ClientWorld w = mc.world;
         if (hasElytra(p)) equipTries = 0;
-        if (!hasElytra(p) && !p.isGliding() && Macros.has("elytra_on")) {
+        if (!hasElytra(p) && !p.isGliding() && Macros.has("elytra_on") && !macroFailed) {
             if (player == null) {
-                if (++equipTries > 3) { fail(mc, "Nie udało się założyć elytry (nagranie nie pomogło)."); return; }
+                if (++equipTries > 2) {
+                    macroFailed = true;
+                    msg(mc, "Nagranie nie założyło elytry – próbuję wbudowaną metodą.");
+                    return;
+                }
+                msg(mc, "Zakładam elytrę według nagrania (" + Macros.count("elytra_on") + " kroków).");
                 player = new MacroPlayer(Macros.get("elytra_on"));
             }
+            KeyBinding.unpressAll();
             status = "Zakładam elytrę (nagranie)";
             if (player.tick(mc, p, w)) player = null;
             return;
@@ -252,6 +259,7 @@ public class Bot {
             // sam zakłada elytrę ze slotu 3 (zamiana z napierśnikiem)
             if (!p.isGliding() && slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) {
                 if (equipCd <= 0) {
+                    if (!Macros.has("elytra_on")) msg(mc, "Brak nagrania „Załóż elytrę” – używam wbudowanej metody.");
                     mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
                     equipCd = 40;
                 }
@@ -688,7 +696,14 @@ public class Bot {
 
     private void mine(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
         if (current == null) { state = State.SEARCH; return; }
-        if (p.isGliding()) return;
+        player = null;
+        if (p.isGliding() && !p.isOnGround()) {
+            // po zejściu z krawędzi elytra mogła się rozłożyć – lecimy w dół do celu i kopiemy po lądowaniu
+            mc.options.forwardKey.setPressed(false);
+            mc.options.jumpKey.setPressed(false);
+            status = "Opadam";
+            return;
+        }
         if (!select(p, AXE_SLOT, Bot::isAxe)) { fail(mc, "Brak siekiery w slocie 1."); return; }
 
         if (--rescanIn <= 0) { rescan(w); rescanIn = 100; }
