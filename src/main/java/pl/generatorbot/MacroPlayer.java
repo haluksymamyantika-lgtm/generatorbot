@@ -40,6 +40,7 @@ public class MacroPlayer {
             return true;
         }
         Macros.Step s = steps.get(idx);
+        if (guard == 0) Bot.msg(mc, "Nagranie: krok " + (idx + 1) + "/" + steps.size() + " (" + s.type + (s.type.equals("SLOT") ? " slot " + s.a : "") + ")");
         boolean ok = true;
         switch (s.type) {
             case "SELECT" -> p.getInventory().selectedSlot = MathHelper.clamp(s.a, 0, 8);
