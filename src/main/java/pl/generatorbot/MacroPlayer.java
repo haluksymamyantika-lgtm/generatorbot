@@ -14,6 +14,9 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.screen.slot.Slot;
+import org.lwjgl.glfw.GLFW;
+import pl.generatorbot.mixin.HandledScreenAccessor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +25,10 @@ import java.util.List;
 public class MacroPlayer {
     private final List<Macros.Step> steps;
     private int idx, wait = 12, guard;
+    // sterowanie kursorem jak myszką
+    private int phase, hold, cg;
+    private double curX = Double.NaN, curY = Double.NaN, jx, jy;
+    private int jFor = -1;
 
     public MacroPlayer(List<Macros.Step> steps) { this.steps = new ArrayList<>(steps); }
 
@@ -61,7 +68,7 @@ public class MacroPlayer {
         }
         if (!ok) return false;
         idx++;
-        guard = 0;
+        guard = 0; phase = 0; hold = 0; cg = 0; jFor = -1;
         wait = idx < steps.size() ? MathHelper.clamp(steps.get(idx).delay, 14, 40) : 14;
         return false;
     }
@@ -99,8 +106,41 @@ public class MacroPlayer {
             if (s.a >= h.slots.size()) { idx = steps.size(); wait = 0; Bot.msg(mc, "Nagranie: slot spoza okna – przerywam."); return false; }
             syncId = h.syncId;
         }
+        if (mc.currentScreen instanceof HandledScreen<?> hs0) {
+            ScreenHandler h0 = hs0.getScreenHandler();
+            java.util.List<Integer> path = new ArrayList<>();
+            if (s.c == 2 && s.b >= 0 && s.b <= 8 && mc.currentScreen instanceof InventoryScreen) path.add(36 + s.b); // najpierw najedź na przedmiot
+            path.add(s.a);
+            if (phase < path.size()) {
+                int target = path.get(phase);
+                if (target < h0.slots.size() && ++cg < 90) {
+                    if (moveCursor(mc, hs0, h0.slots.get(target), target)) {
+                        if (++hold >= 7) { phase++; hold = 0; jFor = -1; }   // chwila "namysłu" nad slotem
+                    } else hold = 0;
+                    return false;
+                }
+                phase = path.size();
+            }
+        }
         SlotActionType type = s.c == 1 ? SlotActionType.QUICK_MOVE : s.c == 2 ? SlotActionType.SWAP : SlotActionType.PICKUP;
         mc.interactionManager.clickSlot(syncId, s.a, s.b, type, p);
         return true;
+    }
+
+    /** Płynnie przesuwa prawdziwy kursor myszy nad slot. @return true, gdy kursor jest nad slotem. */
+    private boolean moveCursor(MinecraftClient mc, HandledScreen<?> hs, Slot sl, int id) {
+        double sf = mc.getWindow().getScaleFactor();
+        HandledScreenAccessor acc = (HandledScreenAccessor) hs;
+        if (jFor != id) { jFor = id; jx = (Math.random() * 2 - 1) * 3; jy = (Math.random() * 2 - 1) * 3; }
+        double tx = (acc.generatorbot$getX() + sl.x + 8 + jx) * sf;
+        double ty = (acc.generatorbot$getY() + sl.y + 8 + jy) * sf;
+        if (Double.isNaN(curX)) { curX = mc.mouse.getX(); curY = mc.mouse.getY(); }
+        double dx = tx - curX, dy = ty - curY, dist = Math.hypot(dx, dy);
+        if (dist < 3 * sf) return true;
+        double step = Math.min(dist, Math.max(dist * 0.18, 9 * sf));   // zwalnia przy celu jak ręka
+        curX += dx / dist * step + (Math.random() - 0.5) * sf;
+        curY += dy / dist * step + (Math.random() - 0.5) * sf;
+        GLFW.glfwSetCursorPos(mc.getWindow().getHandle(), curX, curY);
+        return false;
     }
 }

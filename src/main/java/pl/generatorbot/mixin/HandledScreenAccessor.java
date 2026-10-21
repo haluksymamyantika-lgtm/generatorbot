@@ -9,4 +9,10 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface HandledScreenAccessor {
     @Accessor("focusedSlot")
     Slot generatorbot$getFocusedSlot();
+
+    @Accessor("x")
+    int generatorbot$getX();
+
+    @Accessor("y")
+    int generatorbot$getY();
 }

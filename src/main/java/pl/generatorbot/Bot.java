@@ -65,7 +65,7 @@ public class Bot {
     private int shopAction, plusLeft, plusSlot, restartIn, equipTries;
     private MacroPlayer player;
     private boolean macroFailed;
-    private int glideTicks, targetTicks;
+    private int glideTicks, targetTicks, idleMove;
     private boolean rMacroDone;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
@@ -714,12 +714,10 @@ public class Bot {
     private void mine(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
         if (current == null) { state = State.SEARCH; return; }
         player = null;
-        if (p.isGliding()) {
-            // krótko po uderzeniu w generator elytra jeszcze "leci" – czekamy na ziemię; gdy trwa za długo, wracamy lotem
-            if (!p.isOnGround() && ++glideTicks > 40) { glideTicks = 0; startFlight(mc, current, false); }
-            return;
-        }
-        glideTicks = 0;
+        // po uderzeniu w generator elytra jeszcze chwilę "leci" – kopiemy mimo to, grawitacja sprowadzi bota na ziemię
+        if (p.isGliding() && !p.isOnGround()) {
+            if (++glideTicks > 200) { glideTicks = 0; startFlight(mc, current, false); return; }
+        } else glideTicks = 0;
         if (!select(p, AXE_SLOT, Bot::isAxe)) { fail(mc, "Brak siekiery w slocie 1."); return; }
 
         if (--rescanIn <= 0) { rescan(w); rescanIn = 100; }
@@ -769,11 +767,7 @@ public class Bot {
         boolean aimed = Math.abs(dyaw) < 20 && Math.abs(dpitch) < 20;
 
         if (breakPos != null) {
-            boolean ahead = true; // nie boi się wysokości – idzie dalej nawet bez gruntu pod nogami
-            mc.options.forwardKey.setPressed(ahead);
-            mc.options.sprintKey.setPressed(false);
-            mc.options.jumpKey.setPressed(ahead && p.isOnGround() && p.horizontalCollision
-                    && mineTarget.getY() > p.getY() + 1.0);
+            moveWhileMining(mc, p, c);
             // 0 ticków przerwy: uderza w KAŻDYM ticku, obrót głowy tylko wygląda ludzko i niczego nie opóźnia
             ((ClientPlayerInteractionManagerAccessor) mc.interactionManager)
                     .generatorbot$setBlockBreakingCooldown(0);
@@ -788,6 +782,31 @@ public class Bot {
             if (++walkTicks % 15 == 0) mineTarget = null; // przelicz cel
             status = "Podchodzę do drewna";
         }
+    }
+
+    private int strafeDir = 1, strafeTicks;
+
+    /**
+     * Chodzenie podczas kopania jak w Baritone: podejdź do bloku, a gdy jest blisko, ciągle krąż/skręcaj
+     * bokiem wzdłuż generatora (nigdy nie stój w miejscu). Wysokości się nie boi.
+     */
+    private void moveWhileMining(MinecraftClient mc, ClientPlayerEntity p, Vec3d c) {
+        double hd = Math.hypot(c.x - p.getX(), c.z - p.getZ());
+        boolean far = hd > 2.0;
+        boolean back = hd < 0.9;                    // za blisko bloku -> cofnij się trochę
+        if (--strafeTicks <= 0) { strafeDir = -strafeDir; strafeTicks = 18 + rng.nextInt(22); }
+        mc.options.sprintKey.setPressed(false);
+        mc.options.forwardKey.setPressed(far || (!back && rng.nextInt(3) != 0));
+        mc.options.backKey.setPressed(back);
+        mc.options.leftKey.setPressed(!far && strafeDir < 0);
+        mc.options.rightKey.setPressed(!far && strafeDir > 0);
+        boolean moved = p.getPos().squaredDistanceTo(lastPos) > 0.0004;
+        if (moved) idleMove = 0; else idleMove++;
+        // zablokowany/stoi -> skacz i zmień stronę
+        boolean jump = p.isOnGround() && (p.horizontalCollision || idleMove > 8);
+        mc.options.jumpKey.setPressed(jump);
+        if (idleMove > 8 && idleMove % 8 == 0) strafeDir = -strafeDir;
+        lastPos = p.getPos();
     }
 
     /** Nie wchodź w przepaść: musi być grunt w ciągu 3 bloków pod miejscem tuż przed botem. */
@@ -805,6 +824,7 @@ public class Bot {
     private void walk(MinecraftClient mc, ClientPlayerEntity p, Vec3d t) {
         mc.options.forwardKey.setPressed(true);
         mc.options.sprintKey.setPressed(true);
+        mc.options.backKey.setPressed(false); mc.options.leftKey.setPressed(false); mc.options.rightKey.setPressed(false);
         boolean jump = p.isTouchingWater() || (p.horizontalCollision && p.isOnGround())
                 || (t.y - p.getY() > 2 && p.isOnGround());
         mc.options.jumpKey.setPressed(jump);
