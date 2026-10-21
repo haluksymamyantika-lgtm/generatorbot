@@ -56,6 +56,10 @@ public class BotScreen extends Screen {
                 }));
                 addDrawableChild(new FlatButton(cx0 + half + 8, y0 + 112, half, 24, Text.literal("Usuń nagranie"), Kind.RED,
                         () -> { ShopRecorder.clear(); clearAndInit(); }));
+                addDrawableChild(new FlatButton(cx0, y0 + 186, cw, 24,
+                        Text.literal("Po zakupie: " + (Settings.autoRestart ? "AUTOMATYCZNY restart" : "RĘCZNY Start")),
+                        Settings.autoRestart ? Kind.GREEN : Kind.NORMAL,
+                        () -> { Settings.autoRestart = !Settings.autoRestart; Settings.save(); clearAndInit(); }));
             }
             case 3 -> {
                 addDrawableChild(new FlatSlider(cx0 + 10, y0 + 100, cw - 20, 14, 0.5, 5.0, Settings.labelScale,
