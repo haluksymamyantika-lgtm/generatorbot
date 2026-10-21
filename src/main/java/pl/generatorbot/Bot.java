@@ -162,6 +162,10 @@ public class Bot {
         if (fireworkCd > 0) fireworkCd--;
         if (equipCd > 0) equipCd--;
 
+        if (ticks % 5 == 0 && mc.inGameHud != null) {
+            mc.inGameHud.setOverlayMessage(Text.literal("Bot: " + state + " | " + status + " | ziemia=" + p.isOnGround()
+                    + " lot=" + p.isGliding() + " W=" + mc.options.forwardKey.isPressed()), false);
+        }
         boolean near = playerNear(w, p);
         if (near && (state == State.MINE || state == State.SEARCH || state == State.WAIT)) {
             // jak dawniej: gracz blisko -> odlatuje na elytrze do najbliższego innego generatora
@@ -308,6 +312,10 @@ public class Bot {
                 return;
             }
             turn(p, yawTo(pos, flyTarget), -30f, 90f);   // od razu twarzą do celu
+            if (p.isOnGround() && p.getVelocity().y < 0.1) {   // widoczne podskoczenie, nawet gdyby klawisz nie zadziałał
+                Vec3d v0 = p.getVelocity();
+                p.setVelocity(v0.x, 0.42, v0.z);
+            }
             mc.options.jumpKey.setPressed(p.isOnGround() || ticks % 2 == 0);
             status = "Start elytry";
             return;
@@ -800,11 +808,21 @@ public class Bot {
         mc.options.backKey.setPressed(back);
         mc.options.leftKey.setPressed(!far && strafeDir < 0);
         mc.options.rightKey.setPressed(!far && strafeDir > 0);
+        // gwarancja ruchu: gdyby klawisze nie poruszyły bota, popchnij go sam (bez zmiany pionu)
+        if (!p.horizontalCollision && Math.hypot(p.getVelocity().x, p.getVelocity().z) < 0.05) {
+            double dx = c.x - p.getX(), dz = c.z - p.getZ(), len = Math.max(0.001, Math.hypot(dx, dz));
+            double tx = dx / len, tz = dz / len;
+            double fwd = far ? 1.0 : back ? -0.8 : 0.4;
+            double sd = far ? 0 : strafeDir;
+            double vx = (tx * fwd - tz * sd) * 0.2, vz = (tz * fwd + tx * sd) * 0.2;
+            p.setVelocity(vx, p.getVelocity().y, vz);
+        }
         boolean moved = p.getPos().squaredDistanceTo(lastPos) > 0.0004;
         if (moved) idleMove = 0; else idleMove++;
         // zablokowany/stoi -> skacz i zmień stronę
         boolean jump = p.isOnGround() && (p.horizontalCollision || idleMove > 8);
         mc.options.jumpKey.setPressed(jump);
+        if (jump && p.getVelocity().y < 0.1) { Vec3d v1 = p.getVelocity(); p.setVelocity(v1.x, 0.42, v1.z); }
         if (idleMove > 8 && idleMove % 8 == 0) strafeDir = -strafeDir;
         lastPos = p.getPos();
     }

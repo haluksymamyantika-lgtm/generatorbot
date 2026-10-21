@@ -15,6 +15,7 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.screen.slot.Slot;
+import net.minecraft.item.ItemStack;
 import org.lwjgl.glfw.GLFW;
 import pl.generatorbot.mixin.HandledScreenAccessor;
 
@@ -29,6 +30,7 @@ public class MacroPlayer {
     private int phase, hold, cg;
     private double curX = Double.NaN, curY = Double.NaN, jx, jy;
     private int jFor = -1;
+    private int pickedFrom = -1, fixTicks, fixHold;
 
     public MacroPlayer(List<Macros.Step> steps) { this.steps = new ArrayList<>(steps); }
 
@@ -41,6 +43,7 @@ public class MacroPlayer {
     /** @return true, gdy nagranie się skończyło. */
     public boolean tick(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
         if (wait > 0) { wait--; return false; }
+        if ((idx >= steps.size() || steps.get(idx).type.equals("CLOSE")) && cursorBusy(mc, p)) return false;
         if (idx >= steps.size()) {
             KeyBinding.unpressAll();
             if (mc.currentScreen instanceof HandledScreen<?>) p.closeHandledScreen();
@@ -123,6 +126,10 @@ public class MacroPlayer {
             }
         }
         SlotActionType type = s.c == 1 ? SlotActionType.QUICK_MOVE : s.c == 2 ? SlotActionType.SWAP : SlotActionType.PICKUP;
+        if (type == SlotActionType.PICKUP && mc.currentScreen instanceof HandledScreen<?> hs1) {
+            ScreenHandler h1 = hs1.getScreenHandler();
+            if (h1.getCursorStack().isEmpty() && s.a < h1.slots.size() && !h1.slots.get(s.a).getStack().isEmpty() && pickedFrom < 0) pickedFrom = s.a;
+        }
         mc.interactionManager.clickSlot(syncId, s.a, s.b, type, p);
         return true;
     }
@@ -142,5 +149,32 @@ public class MacroPlayer {
         curY += dy / dist * step + (Math.random() - 0.5) * sf;
         GLFW.glfwSetCursorPos(mc.getWindow().getHandle(), curX, curY);
         return false;
+    }
+
+    /**
+     * Zanim ekwipunek się zamknie: jeśli coś zostało na kursorze (np. klata po zamianie z elytrą),
+     * odłóż to na miejsce, z którego brano pierwszy przedmiot (albo do pierwszego wolnego slotu).
+     * @return true, gdy jeszcze to robi.
+     */
+    private boolean cursorBusy(MinecraftClient mc, ClientPlayerEntity p) {
+        if (!(mc.currentScreen instanceof HandledScreen<?> hs)) return false;
+        ScreenHandler h = hs.getScreenHandler();
+        ItemStack cur = h.getCursorStack();
+        if (cur.isEmpty() || ++fixTicks > 150) return false;
+        int target = -1;
+        if (pickedFrom >= 0 && pickedFrom < h.slots.size() && h.slots.get(pickedFrom).getStack().isEmpty()
+                && h.slots.get(pickedFrom).canInsert(cur)) target = pickedFrom;
+        if (target < 0) {
+            int from = hs instanceof InventoryScreen ? 9 : 0;
+            for (int i = from; i < h.slots.size(); i++) {
+                Slot sl = h.slots.get(i);
+                if (sl.getStack().isEmpty() && sl.canInsert(cur) && (!(hs instanceof InventoryScreen) || i >= 9)) { target = i; break; }
+            }
+        }
+        if (target < 0) return false;
+        if (moveCursor(mc, hs, h.slots.get(target), target)) {
+            if (++fixHold >= 6) { mc.interactionManager.clickSlot(h.syncId, target, 0, SlotActionType.PICKUP, p); fixHold = 0; jFor = -1; }
+        } else fixHold = 0;
+        return true;
     }
 }
