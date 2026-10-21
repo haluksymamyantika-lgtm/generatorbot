@@ -41,6 +41,10 @@ public class GeneratorBotClient implements ClientModInitializer {
 
         // nagrywanie: kliknięcia w okna i klawisze cyfr nad slotem
         ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {
+            if (screen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen) Macros.onOpen(client, screen);
+            if (screen instanceof HandledScreen<?>) {
+                ScreenEvents.remove(screen).register(sc -> Macros.onClose(client, sc));
+            }
             if (screen instanceof HandledScreen<?> hs) {
                 ScreenMouseEvents.beforeMouseClick(screen).register((scr, mx, my, btn) -> Macros.onSlotClick(client, hs, btn));
                 ScreenKeyboardEvents.beforeKeyPress(screen).register((scr, key, sc, mod) -> Macros.onKey(client, hs, key));

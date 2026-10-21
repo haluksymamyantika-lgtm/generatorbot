@@ -73,7 +73,9 @@ public class PlacesScreen extends Screen {
     @Override
     public void renderBackground(DrawContext c, int mouseX, int mouseY, float delta) {
         super.renderBackground(c, mouseX, mouseY, delta);
-        Ui.roundBorder(c, x0 - 1, y0 - 1, x0 + W + 1, y0 + H + 1, Ui.LINE, Ui.BG);
+        Ui.shadow(c, x0, y0, x0 + W, y0 + H);
+        Ui.roundBorder(c, x0 - 1, y0 - 1, x0 + W + 1, y0 + H + 1, 0xFF34313D, Ui.BG);
+        c.fillGradient(x0 + 3, y0, x0 + W - 3, y0 + 2, Ui.ACCENT, 0xFF7C3AED);
 
         List<Area> list = GeneratorBotClient.AREAS.areas;
         int pages = Math.max(1, (list.size() + PER_PAGE - 1) / PER_PAGE);
@@ -86,7 +88,7 @@ public class PlacesScreen extends Screen {
             if (idx >= list.size()) break;
             Area a = list.get(idx);
             int ry = y0 + 52 + r * ROW;
-            Ui.round(c, x0 + 8, ry, x0 + W - 8, ry + ROW - 2, Ui.CARD);
+            Ui.card(c, x0 + 8, ry, x0 + W - 8, ry + ROW - 2);
             int stripe = !a.enabled ? 0xFF6B6B73 : a.visited ? 0xFF38A9FF : Ui.RED;
             c.fill(x0 + 8, ry + 3, x0 + 11, ry + ROW - 5, stripe);
         }

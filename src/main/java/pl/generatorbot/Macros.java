@@ -33,10 +33,10 @@ public class Macros {
     }
 
     public static final String[] KEYS = {"elytra_off", "repair", "shop", "elytra_on"};
-    public static final String[] TITLES = {"1. Zdejmij elytrę", "2. Naprawa u kowadła", "3. Zakupy w /sklep", "4. Załóż elytrę"};
+    public static final String[] TITLES = {"1. Załóż klatę (zdejmij elytrę)", "2. Naprawa elytry i siekiery", "3. Zakupy w /sklep", "4. Załóż elytrę"};
     private static final String[] HINTS = {
             "Otwórz ekwipunek (E) i zrób to, co robisz ręcznie, żeby zdjąć elytrę (elytra ma trafić do slotu 3, a klata na ciebie). Zamknij ekwipunek.",
-            "Stań przy kowadle. Dla każdego przedmiotu: wybierz jego slot, kliknij PPM kowadło, kliknij butelkę z expem, zamknij okno (Esc). Zrób to dla miecza, elytry i siekiery.",
+            "Stań przy kowadle. Dla każdego przedmiotu: wybierz jego slot, kliknij PPM kowadło, kliknij butelkę z expem, zamknij okno (Esc). Zrób to dla elytry i siekiery (miecza nie naprawiamy).",
             "Bot sam wpisze /sklep. Ty (po wpisaniu /sklep) kliknij po kolei: Pieniądze, Potrzebne przedmioty, fajerwerki, +16 (tyle razy ile chcesz), Potwierdź. Zamknij okno.",
             "Otwórz ekwipunek (E) i załóż elytrę tak, jak robisz to ręcznie (ze slotu 3 na klatę). Zamknij ekwipunek."};
 
@@ -88,6 +88,7 @@ public class Macros {
         recording = key;
         sinceLast = 0; idle = 0; real = false;
         lastSelected = mc.player.getInventory().selectedSlot;
+        lastInv = null;
         Step s = new Step();
         s.type = "SELECT"; s.a = lastSelected;
         DATA.get(key).add(s);
@@ -156,6 +157,26 @@ public class Macros {
         st.type = "SLOT"; st.inv = hs instanceof InventoryScreen;
         st.a = s.id; st.b = key - GLFW.GLFW_KEY_1; st.c = 2;
         add(mc, st, "slot " + s.id + " zamieniony z paskiem " + (st.b + 1));
+    }
+
+    private static Screen lastInv;
+
+    /** Otwarto ekwipunek gracza (np. klawiszem E). */
+    public static void onOpen(MinecraftClient mc, Screen screen) {
+        if (recording == null || screen == lastInv) return;
+        lastInv = screen;
+        Step st = new Step();
+        st.type = "OPEN";
+        add(mc, st, "otwarcie ekwipunku");
+    }
+
+    /** Zamknięto okno (ekwipunek, kowadło, sklep…). */
+    public static void onClose(MinecraftClient mc, Screen screen) {
+        if (screen == lastInv) lastInv = null;
+        if (recording == null) return;
+        Step st = new Step();
+        st.type = "CLOSE";
+        add(mc, st, "zamknięcie okna");
     }
 
     public static void onBlock(MinecraftClient mc, BlockHitResult hit) {

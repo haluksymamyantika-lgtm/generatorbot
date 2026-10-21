@@ -31,13 +31,21 @@ public class FlatButton extends ClickableWidget {
             case NAV -> hov ? Ui.CARD : 0x00000000;
             default -> hov ? Ui.CARD_HOVER : Ui.CARD;
         };
-        if ((bg >>> 24) != 0) Ui.round(c, getX(), getY(), getX() + getWidth(), getY() + getHeight(), bg);
+        if (kind == Kind.NAV_ACTIVE) {
+            Ui.round(c, getX(), getY(), getX() + getWidth(), getY() + getHeight(), Ui.ACCENT_DARK);
+            c.fill(getX(), getY() + 3, getX() + 3, getY() + getHeight() - 3, Ui.ACCENT);
+        } else if ((bg >>> 24) != 0) {
+            if (kind == Kind.NORMAL) Ui.round(c, getX(), getY(), getX() + getWidth(), getY() + getHeight(), hov ? 0xFF4A4655 : 0xFF34313D);
+            Ui.round(c, getX() + (kind == Kind.NORMAL ? 1 : 0), getY() + (kind == Kind.NORMAL ? 1 : 0),
+                    getX() + getWidth() - (kind == Kind.NORMAL ? 1 : 0), getY() + getHeight() - (kind == Kind.NORMAL ? 1 : 0), bg);
+        }
         TextRenderer tr = MinecraftClient.getInstance().textRenderer;
         Text msg = getMessage();
         int tw = tr.getWidth(msg);
         int tx = leftAlign ? getX() + 10 : getX() + (getWidth() - tw) / 2;
         int ty = getY() + (getHeight() - 8) / 2;
         int col = (kind == Kind.NAV && !hov) ? Ui.MUTED : Ui.TEXT;
+        if (kind == Kind.NAV_ACTIVE) tx += 4;
         c.drawTextWithShadow(tr, msg, tx, ty, col);
     }
 

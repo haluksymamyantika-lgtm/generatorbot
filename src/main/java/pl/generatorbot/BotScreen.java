@@ -129,8 +129,11 @@ public class BotScreen extends Screen {
     @Override
     public void renderBackground(DrawContext c, int mouseX, int mouseY, float delta) {
         super.renderBackground(c, mouseX, mouseY, delta);
-        Ui.roundBorder(c, x0 - 1, y0 - 1, x0 + W + 1, y0 + H + 1, Ui.LINE, Ui.BG);
-        c.fill(x0 + 1, y0 + 2, x0 + SIDE, y0 + H - 2, Ui.SIDEBAR);
+        Ui.shadow(c, x0, y0, x0 + W, y0 + H);
+        Ui.roundBorder(c, x0 - 1, y0 - 1, x0 + W + 1, y0 + H + 1, 0xFF34313D, Ui.BG);
+        c.fillGradient(x0 + 1, y0 + 2, x0 + SIDE, y0 + H - 2, 0xFF1A1820, 0xFF0F0E12);
+        c.fill(x0 + SIDE, y0 + 6, x0 + SIDE + 1, y0 + H - 6, Ui.LINE);
+        c.fillGradient(x0 + 3, y0, x0 + W - 3, y0 + 2, Ui.ACCENT, 0xFF7C3AED);
 
         // --- pasek boczny
         Ui.big(c, Text.literal("GeneratorBot").formatted(Formatting.BOLD), x0 + 10, y0 + 12, 1.2f);
@@ -147,7 +150,7 @@ public class BotScreen extends Screen {
 
         switch (tab) {
             case 0 -> {
-                Ui.round(c, cx0, y0 + 52, cx0 + cw, y0 + 112, Ui.CARD);
+                Ui.card(c, cx0, y0 + 52, cx0 + cw, y0 + 112);
                 Ui.text(c, Text.literal("Status"), cx0 + 10, y0 + 60, Ui.MUTED);
                 Ui.text(c, Text.literal(st.status).formatted(stateColor(st.state), Formatting.BOLD), cx0 + 10, y0 + 74, 0xFFFFFFFF);
                 int total = GeneratorBotClient.AREAS.areas.size(), on = 0, red = 0, blue = 0;
@@ -158,9 +161,9 @@ public class BotScreen extends Screen {
                 }
                 Ui.text(c, Text.literal("Miejsca: " + total + "   ON: " + on + "   czerwone: " + red + "   niebieskie: " + blue),
                         cx0 + 10, y0 + 92, Ui.MUTED);
-                Ui.round(c, cx0, y0 + 162, cx0 + cw, y0 + 232, Ui.CARD);
+                Ui.card(c, cx0, y0 + 162, cx0 + cw, y0 + 232);
                 Ui.text(c, Text.literal("Sloty paska"), cx0 + 10, y0 + 170, Ui.MUTED);
-                Ui.text(c, Text.literal("1 siekiera   2 miecz   3 elytra   4 fajerwerki"), cx0 + 10, y0 + 186, 0xFFFFFFFF);
+                Ui.text(c, Text.literal("1 siekiera   3 elytra   4 fajerwerki"), cx0 + 10, y0 + 186, 0xFFFFFFFF);
                 Ui.text(c, Text.literal("Bot sam zakłada elytrę i naprawia przedmioty."), cx0 + 10, y0 + 204, Ui.MUTED);
             }
             case 1 -> {
@@ -171,7 +174,9 @@ public class BotScreen extends Screen {
                 for (int i = 0; i < Macros.KEYS.length; i++) {
                     String key = Macros.KEYS[i];
                     int ry = y0 + 52 + i * 40;
-                    Ui.round(c, cx0, ry, cx0 + cw, ry + 36, Ui.CARD);
+                    Ui.card(c, cx0, ry, cx0 + cw, ry + 36);
+                    boolean has = Macros.has(key), isRec = key.equals(Macros.recording);
+                    Ui.dot(c, cx0 + cw - 160, ry + 15, isRec ? 0xFFF5C542 : has ? Ui.GREEN : 0xFF55525E);
                     Ui.text(c, Text.literal(Macros.TITLES[i]).formatted(Formatting.BOLD), cx0 + 10, ry + 7, 0xFFFFFFFF);
                     boolean rec = key.equals(Macros.recording);
                     int n = Macros.count(key);
@@ -180,14 +185,14 @@ public class BotScreen extends Screen {
                 }
             }
             case 3 -> {
-                Ui.round(c, cx0, y0 + 52, cx0 + cw, y0 + 154, Ui.CARD);
+                Ui.card(c, cx0, y0 + 52, cx0 + cw, y0 + 154);
                 Ui.text(c, Text.literal("Rozmiar nazw"), cx0 + 10, y0 + 60, Ui.MUTED);
                 Ui.text(c, Text.literal("x" + String.format("%.1f", Settings.labelScale)).formatted(Formatting.BOLD),
                         cx0 + cw - 34, y0 + 60, 0xFFFFFFFF);
                 Ui.text(c, Text.literal("Przeciągnij suwak lub wybierz gotowy rozmiar"), cx0 + 10, y0 + 76, Ui.MUTED);
             }
             case 4 -> {
-                Ui.round(c, cx0, y0 + 126, cx0 + cw, y0 + 190, Ui.CARD);
+                Ui.card(c, cx0, y0 + 126, cx0 + cw, y0 + 190);
                 Ui.text(c, Text.literal("Klawisze stałe"), cx0 + 10, y0 + 134, Ui.MUTED);
                 Ui.text(c, Text.literal("J – zaznacz róg   Shift+J – cofnij"), cx0 + 10, y0 + 150, 0xFFFFFFFF);
                 Ui.text(c, Text.literal("L – to menu (zmienisz w Sterowaniu)"), cx0 + 10, y0 + 166, 0xFFFFFFFF);

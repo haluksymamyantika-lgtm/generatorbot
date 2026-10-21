@@ -49,6 +49,12 @@ public class MacroPlayer {
                 mc.interactionManager.interactItem(p, Hand.MAIN_HAND);
                 p.swingHand(Hand.MAIN_HAND);
             }
+            case "OPEN" -> {
+                if (!(mc.currentScreen instanceof InventoryScreen)) mc.setScreen(new InventoryScreen(p));
+            }
+            case "CLOSE" -> {
+                if (mc.currentScreen instanceof HandledScreen<?>) p.closeHandledScreen();
+            }
             case "BLOCK" -> ok = doBlock(mc, p, s);
             case "SLOT" -> ok = doSlot(mc, p, s);
             default -> {}

@@ -26,6 +26,21 @@ public final class Ui {
         round(c, x1 + 1, y1 + 1, x2 - 1, y2 - 1, fill);
     }
 
+    /** Karta z delikatną ramką. */
+    public static void card(DrawContext c, int x1, int y1, int x2, int y2) {
+        roundBorder(c, x1, y1, x2, y2, 0xFF34313D, CARD);
+    }
+
+    /** Kolorowa kropka statusu. */
+    public static void dot(DrawContext c, int x, int y, int col) {
+        round(c, x, y, x + 6, y + 6, col);
+    }
+
+    /** Cień pod oknem. */
+    public static void shadow(DrawContext c, int x1, int y1, int x2, int y2) {
+        for (int i = 6; i >= 1; i--) c.fill(x1 - i, y1 - i + 3, x2 + i, y2 + i + 3, (0x0C * (7 - i) / 2) << 24);
+    }
+
     public static void text(DrawContext c, Text t, int x, int y, int color) {
         c.drawTextWithShadow(MinecraftClient.getInstance().textRenderer, t, x, y, color);
     }

@@ -42,14 +42,14 @@ public class Bot {
             Blocks.ACACIA_LOG, Blocks.DARK_OAK_LOG, Blocks.OAK_LOG,
             Blocks.ACACIA_WOOD, Blocks.DARK_OAK_WOOD, Blocks.OAK_WOOD);
     private static final double REACH = 4.4;
-    private static final double FLEE_DIST_SQ = 5.0 * 5.0;
+    private static final double FLEE_DIST_SQ = 8.0 * 8.0;
     private static final double CRUISE_Y = 240.0;
     private static final int AXE_SLOT = 0;     // slot 1
     private static final int ROCKET_SLOT = 3;  // slot 4
     private static final int ELYTRA_SLOT = 2;  // slot 3
     private static final int SWORD_SLOT = 1;   // slot 2
-    /** Kolejność naprawy: miecz (slot 2), elytra (slot 3), siekiera (slot 1). */
-    private static final int[] REPAIR_ORDER = {SWORD_SLOT, ELYTRA_SLOT, AXE_SLOT};
+    /** Kolejność naprawy: elytra (slot 3), siekiera (slot 1). Miecza nie naprawiamy. */
+    private static final int[] REPAIR_ORDER = {ELYTRA_SLOT, AXE_SLOT};
     /** Punkt z kowadłem: x -7, y 161, z 1 (środek bloku). Bot leci tu co rundę. */
     private static final Vec3d STATION = new Vec3d(-6.5, 162.0, 1.5);
 
@@ -65,6 +65,7 @@ public class Bot {
     private int shopAction, plusLeft, plusSlot, restartIn, equipTries;
     private MacroPlayer player;
     private boolean macroFailed;
+    private int glideTicks;
     private boolean rMacroDone;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
@@ -120,6 +121,33 @@ public class Bot {
         if (was) msg(mc, "Bot zatrzymany – sterujesz sam.");
     }
 
+    /** Wbudowana zamiana klaty z elytrą ze slotu 3 – z OTWARCIEM ekwipunku, tak jak człowiek (E, klik, zamknięcie). */
+    private static List<Macros.Step> swapSteps() {
+        List<Macros.Step> l = new ArrayList<>();
+        Macros.Step o = new Macros.Step(); o.type = "OPEN"; l.add(o);
+        Macros.Step s = new Macros.Step(); s.type = "SLOT"; s.inv = true; s.a = 6; s.b = ELYTRA_SLOT; s.c = 2; s.delay = 20; l.add(s);
+        Macros.Step c = new Macros.Step(); c.type = "CLOSE"; c.delay = 20; l.add(c);
+        return l;
+    }
+
+    /** Zakłada elytrę: nagranie (2 próby), potem wbudowana metoda. @return true, gdy elytra jest już na klacie. */
+    private boolean equipFlow(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
+        if (hasElytra(p)) { player = null; return true; }
+        if (player == null) {
+            equipTries++;
+            if (equipTries > 4) { fail(mc, "Nie udało się założyć elytry (4 próby)."); return false; }
+            boolean macro = Macros.has("elytra_on") && equipTries <= 2;
+            if (!macro && !slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) { fail(mc, "Brak elytry w slocie 3 – nie mogę jej założyć."); return false; }
+            msg(mc, macro ? "Zakładam elytrę według nagrania (" + Macros.count("elytra_on") + " kroków)."
+                          : "Zakładam elytrę wbudowaną metodą (otwieram ekwipunek).");
+            player = new MacroPlayer(macro ? Macros.get("elytra_on") : swapSteps());
+        }
+        KeyBinding.unpressAll();
+        status = "Zakładam elytrę";
+        if (player.tick(mc, p, w)) player = null;
+        return false;
+    }
+
     private void fail(MinecraftClient mc, String why) { msg(mc, why); stop(mc); }
 
     public void tick(MinecraftClient mc) {
@@ -129,7 +157,7 @@ public class Bot {
         ClientWorld w = mc.world;
         if (p == null || w == null || mc.interactionManager == null) { state = State.STOPPED; return; }
         if (!p.isAlive()) { stop(mc); return; }
-        if (mc.currentScreen != null && state != State.REPAIR) return;
+        if (mc.currentScreen != null && state != State.REPAIR && player == null) return;
         ticks++;
         if (fireworkCd > 0) fireworkCd--;
         if (equipCd > 0) equipCd--;
@@ -240,35 +268,10 @@ public class Bot {
     private void flight(MinecraftClient mc, ClientPlayerEntity p) {
         ClientWorld w = mc.world;
         if (hasElytra(p)) equipTries = 0;
-        if (!hasElytra(p) && !p.isGliding() && Macros.has("elytra_on") && !macroFailed) {
-            if (player == null) {
-                if (++equipTries > 2) {
-                    macroFailed = true;
-                    msg(mc, "Nagranie nie założyło elytry – próbuję wbudowaną metodą.");
-                    return;
-                }
-                msg(mc, "Zakładam elytrę według nagrania (" + Macros.count("elytra_on") + " kroków).");
-                player = new MacroPlayer(Macros.get("elytra_on"));
-            }
-            KeyBinding.unpressAll();
-            status = "Zakładam elytrę (nagranie)";
-            if (player.tick(mc, p, w)) player = null;
-            return;
+        if (!hasElytra(p) && !p.isGliding()) {
+            if (!equipFlow(mc, p, w)) return;   // elytra jeszcze nie na klacie
         }
-        if (!hasElytra(p)) {
-            // sam zakłada elytrę ze slotu 3 (zamiana z napierśnikiem)
-            if (!p.isGliding() && slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) {
-                if (equipCd <= 0) {
-                    if (!Macros.has("elytra_on")) msg(mc, "Brak nagrania „Załóż elytrę” – używam wbudowanej metody.");
-                    mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
-                    equipCd = 40;
-                }
-                status = "Zakładam elytrę";
-                return;
-            }
-            fail(mc, "Brak elytry w slocie 3.");
-            return;
-        }
+        if (!hasElytra(p)) { fail(mc, "Brak elytry na klacie w locie."); return; }
         if (!select(p, ROCKET_SLOT, Bot::isRocket)) { fail(mc, "Brak fajerwerków w slocie 4."); return; }
         ItemStack el = p.getEquippedStack(EquipmentSlot.CHEST);
         if (el.getMaxDamage() - el.getDamage() <= 3) { fail(mc, "Elytra zaraz się zepsuje – stop."); return; }
@@ -323,7 +326,7 @@ public class Bot {
         }
 
         // ściana / skała przed nosem -> w górę (omijanie)
-        if (climbed && !diving && distH > 12) {
+        if (climbed && !diving && distH > 40) {
             Vec3d look = p.getRotationVec(1f);
             BlockHitResult wall = w.raycast(new RaycastContext(eye, eye.add(look.multiply(16)),
                     RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, p));
@@ -506,42 +509,40 @@ public class Bot {
             status = "Po zakupach: układam ekwipunek";
             return;
         }
-        if (rStep == 15) { // fajerwerki z zakupów -> slot 4
+        if (rStep == 15) { // fajerwerki z zakupów -> slot 4 (przez ekwipunek)
             if (rTimer < 25) return;
-            if (!slotHas(p, ROCKET_SLOT, Bot::isRocket)) {
-                for (int i = 0; i < 36; i++) {
-                    if (i == ROCKET_SLOT) continue;
-                    if (isRocket(p.getInventory().getStack(i))) {
-                        int id = i < 9 ? 36 + i : i;
-                        mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, id, ROCKET_SLOT, SlotActionType.SWAP, p);
-                        break;
+            if (player == null) {
+                int found = -1;
+                if (!slotHas(p, ROCKET_SLOT, Bot::isRocket)) {
+                    for (int i = 0; i < 36; i++) {
+                        if (i != ROCKET_SLOT && isRocket(p.getInventory().getStack(i))) { found = i; break; }
                     }
                 }
+                if (found < 0) { rStep = 16; rTimer = 0; rTries = 0; return; }
+                List<Macros.Step> l = new ArrayList<>();
+                Macros.Step o = new Macros.Step(); o.type = "OPEN"; l.add(o);
+                Macros.Step sl = new Macros.Step(); sl.type = "SLOT"; sl.inv = true; sl.a = found < 9 ? 36 + found : found;
+                sl.b = ROCKET_SLOT; sl.c = 2; sl.delay = 20; l.add(sl);
+                Macros.Step c = new Macros.Step(); c.type = "CLOSE"; c.delay = 20; l.add(c);
+                player = new MacroPlayer(l);
             }
-            rStep = 16; rTimer = 0;
+            status = "Układam fajerwerki w slocie 4";
+            if (player.tick(mc, p, w)) { player = null; rStep = 16; rTimer = 0; rTries = 0; }
             return;
         }
-        if (rStep == 16) { // elytra na klatę
+        if (rStep == 16) { // elytra na klatę po zakupach
             if (rTimer < 25) return;
-            if (!hasElytra(p) && Macros.has("elytra_on")) {
-                if (player == null) player = new MacroPlayer(Macros.get("elytra_on"));
-                status = "Zakładam elytrę (nagranie)";
-                if (player.tick(mc, p, w)) { player = null; rStep = 17; rTimer = 0; }
-                return;
+            if (hasElytra(p)) { player = null; rStep = 17; rTimer = 0; return; }
+            if (player == null) {
+                rTries++;
+                if (rTries > 4) { msg(mc, "Nie udało się założyć elytry po zakupach."); rStep = 17; rTimer = 0; return; }
+                boolean macro = Macros.has("elytra_on") && rTries <= 2;
+                if (!macro && !slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) { msg(mc, "Brak elytry w slocie 3 po zakupach."); rStep = 17; rTimer = 0; return; }
+                msg(mc, macro ? "Zakładam elytrę według nagrania." : "Zakładam elytrę wbudowaną metodą (otwieram ekwipunek).");
+                player = new MacroPlayer(macro ? Macros.get("elytra_on") : swapSteps());
             }
-            if (hasElytra(p)) { rStep = 17; rTimer = 0; return; }
-            if (slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) {
-                if (equipCd <= 0) {
-                    mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
-                    equipCd = 40;
-                }
-                status = "Zakładam elytrę";
-            } else if (rTimer > 40) {
-                msg(mc, "Brak elytry do założenia po zakupach.");
-                rStep = 17; rTimer = 0;
-                return;
-            }
-            if (rTimer > 240) { rStep = 17; rTimer = 0; }
+            status = "Zakładam elytrę";
+            if (player.tick(mc, p, w)) player = null;
             return;
         }
         if (rStep == 17) {
@@ -592,7 +593,7 @@ public class Bot {
             return;
         }
         if (rStep == 1) { // przedmiot do ręki
-            if (rTimer > 120) { msg(mc, "Nie mogę wziąć przedmiotu ze slotu " + (slot + 1) + " – pomijam."); nextRepairItem(mc, p); return; }
+            if (rTimer > 500) { msg(mc, "Nie mogę wziąć przedmiotu ze slotu " + (slot + 1) + " – pomijam."); nextRepairItem(mc, p); return; }
             if (rTimer < 15) return;
             ItemStack cur = (slot == ELYTRA_SLOT && hasElytra(p)) ? p.getEquippedStack(EquipmentSlot.CHEST) : p.getInventory().getStack(slot);
             if (pr.test(cur) && !cur.isDamaged()) {
@@ -601,12 +602,10 @@ public class Bot {
                 return;
             }
             if (!slotHas(p, slot, pr)) {
-                if (slot == ELYTRA_SLOT && hasElytra(p)) { // elytra jest założona -> przenieś ją z powrotem do slotu 3
-                    if (equipCd <= 0) {
-                        mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
-                        equipCd = 40;
-                    }
-                    status = "Naprawa: biorę elytrę do ręki";
+                if (slot == ELYTRA_SLOT && hasElytra(p)) { // elytra jest na klacie -> zamiana z klatą (otwiera ekwipunek)
+                    if (player == null) player = new MacroPlayer(swapSteps());
+                    status = "Naprawa: zakładam klatę (ekwipunek)";
+                    if (player.tick(mc, p, w)) player = null;
                     return;
                 }
                 msg(mc, "Brak przedmiotu w slocie " + (slot + 1) + " – pomijam.");
@@ -697,13 +696,12 @@ public class Bot {
     private void mine(MinecraftClient mc, ClientPlayerEntity p, ClientWorld w) {
         if (current == null) { state = State.SEARCH; return; }
         player = null;
-        if (p.isGliding() && !p.isOnGround()) {
-            // po zejściu z krawędzi elytra mogła się rozłożyć – lecimy w dół do celu i kopiemy po lądowaniu
-            mc.options.forwardKey.setPressed(false);
-            mc.options.jumpKey.setPressed(false);
-            status = "Opadam";
+        if (p.isGliding()) {
+            // krótko po uderzeniu w generator elytra jeszcze "leci" – czekamy na ziemię; gdy trwa za długo, wracamy lotem
+            if (!p.isOnGround() && ++glideTicks > 40) { glideTicks = 0; startFlight(mc, current, false); }
             return;
         }
+        glideTicks = 0;
         if (!select(p, AXE_SLOT, Bot::isAxe)) { fail(mc, "Brak siekiery w slocie 1."); return; }
 
         if (--rescanIn <= 0) { rescan(w); rescanIn = 100; }
