@@ -1,10 +1,6 @@
 package pl.generatorbot;
 
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexConsumerProvider;
@@ -47,10 +43,6 @@ public class AreaRenderer {
         VertexConsumer lines = vcp.getBuffer(RenderLayer.getLines());
         for (int i = 0; i < boxes.size(); i++) outline(lines, ms.peek(), boxes.get(i), cols.get(i));
         if (vcp instanceof VertexConsumerProvider.Immediate imm) imm.draw(RenderLayer.getLines());
-
-        ms.pop();
-        }
-        if (vcp instanceof VertexConsumerProvider.Immediate imm) imm.draw();
 
         ms.pop();
     }
