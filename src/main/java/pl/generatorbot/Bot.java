@@ -65,7 +65,7 @@ public class Bot {
     private int shopAction, plusLeft, plusSlot, restartIn, equipTries;
     private MacroPlayer player;
     private boolean macroFailed;
-    private int glideTicks;
+    private int glideTicks, targetTicks;
     private boolean rMacroDone;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
@@ -163,14 +163,17 @@ public class Bot {
         if (equipCd > 0) equipCd--;
 
         boolean near = playerNear(w, p);
-        if (near && state == State.MINE) {
-            // odlatuje -> to miejsce robi się niebieskie, bot leci do następnego z listy
-            if (current != null) current.visited = true;
-            mc.interactionManager.cancelBlockBreaking();
-            KeyBinding.unpressAll();
-            mineTarget = null;
-            state = State.SEARCH;
-            status = "Gracz blisko – lecę dalej";
+        if (near && (state == State.MINE || state == State.SEARCH || state == State.WAIT)) {
+            // jak dawniej: gracz blisko -> odlatuje na elytrze do najbliższego innego generatora
+            Area dest = fleeArea(w, p);
+            if (dest != null) {
+                if (current != null) current.visited = true;   // z tego generatora odlatuje -> niebieski
+                startFlight(mc, dest, true);
+                return;
+            }
+            // nie ma dokąd uciec -> stoi i czeka, aż gracz odejdzie
+            if (state == State.MINE) { mc.interactionManager.cancelBlockBreaking(); KeyBinding.unpressAll(); }
+            state = State.PAUSE; status = "Gracz w pobliżu – czekam";
             return;
         }
 
@@ -194,7 +197,7 @@ public class Bot {
             case FLY -> flight(mc, p);
             case MINE -> mine(mc, p, w);
             case REPAIR -> repair(mc, p, w);
-            case PAUSE -> state = State.SEARCH;
+            case PAUSE -> { if (!near) state = current != null ? State.MINE : State.SEARCH; }
             default -> {}
         }
     }
@@ -214,6 +217,21 @@ public class Bot {
             return a;
         }
         return null;
+    }
+
+    /** Najbliższy INNY włączony generator, w którym coś zostało (najpierw czerwone, potem dowolne). */
+    private Area fleeArea(ClientWorld w, ClientPlayerEntity p) {
+        Area best = null; double bd = Double.MAX_VALUE;
+        for (int pass = 0; pass < 2 && best == null; pass++) {
+            for (Area a : GeneratorBotClient.AREAS.areas) {
+                if (a == current || !a.enabled) continue;
+                if (pass == 0 && a.visited) continue;
+                if (!hasTargets(w, a)) continue;
+                double d = a.center().squaredDistanceTo(p.getPos());
+                if (d < bd) { bd = d; best = a; }
+            }
+        }
+        return best;
     }
 
     private boolean hasTargets(ClientWorld w, Area a) {
@@ -705,10 +723,14 @@ public class Bot {
         if (!select(p, AXE_SLOT, Bot::isAxe)) { fail(mc, "Brak siekiery w slocie 1."); return; }
 
         if (--rescanIn <= 0) { rescan(w); rescanIn = 100; }
+        // cel poza zasięgiem (bot poszedł dalej) -> wybierz nowy; za długo na jednym bloku -> pomiń go
+        if (mineTarget != null && isTarget(w, mineTarget)) {
+            if (p.getEyePos().distanceTo(Vec3d.ofCenter(mineTarget)) > REACH + 0.8) mineTarget = null;
+            else if (++targetTicks > 160) { blacklist.put(mineTarget, ticks + 1200); mineTarget = null; }
+        }
         if (mineTarget == null || !isTarget(w, mineTarget)) {
-            boolean hadTarget = mineTarget != null;
             mineTarget = chooseTarget(w, p);
-            stuck = 0;
+            targetTicks = 0; stuck = 0;
             aimOffset = new Vec3d(rnd(0.3), rnd(0.3), rnd(0.3)); // za każdym razem inny punkt bloku
         }
         if (mineTarget == null) {
@@ -804,25 +826,33 @@ public class Bot {
                     if (TARGETS.contains(w.getBlockState(m.set(x, y, z)).getBlock())) cache.add(m.toImmutable());
     }
 
+    /**
+     * Wybór bloku jak w Baritone: najchętniej na wysokości ciała (tunel poziomy) i z przodu, żeby bot szedł i skręcał,
+     * a nie kopał dziury pod sobą. Kopanie w dół i w górę ma karę, ale jest możliwe, gdy nie ma nic innego.
+     */
     private BlockPos chooseTarget(ClientWorld w, ClientPlayerEntity p) {
         Vec3d eye = p.getEyePos();
+        int feetY = MathHelper.floor(p.getY());
+        double yaw = Math.toRadians(p.getYaw());
+        double fx = -Math.sin(yaw), fz = Math.cos(yaw);
         cache.removeIf(b -> !isTarget(w, b));
-        List<BlockPos> valid = new ArrayList<>();
+        BlockPos best = null; double bs = Double.MAX_VALUE;
+        BlockPos nearest = null; double nd = Double.MAX_VALUE;
         for (BlockPos b : cache) {
-            Integer until = blacklist.get(b);
-            if (until == null || until <= ticks) valid.add(b);
-        }
-        if (valid.isEmpty()) return null;
-        valid.sort(Comparator.comparingDouble(b -> Vec3d.ofCenter(b).squaredDistanceTo(eye)));
-        int tested = 0;
-        for (BlockPos b : valid) {
             Vec3d c = Vec3d.ofCenter(b);
-            if (c.distanceTo(eye) > REACH) break;
-            BlockHitResult hr = w.raycast(new RaycastContext(eye, c, RaycastContext.ShapeType.OUTLINE,
-                    RaycastContext.FluidHandling.NONE, p));
-            if (hr.getType() == HitResult.Type.BLOCK && hr.getBlockPos().equals(b)) return b;
-            if (++tested >= 10) break;
+            double d = c.distanceTo(eye);
+            Integer until = blacklist.get(b);
+            boolean banned = until != null && until > ticks;
+            if (!banned && d < nd) { nd = d; nearest = b; }
+            if (banned || d > REACH + 0.5) continue;
+            double dy = b.getY() - feetY;
+            double score = d;
+            if (dy < 0) score += 5 + 2 * (-dy);            // nie kop dziur pod sobą
+            else if (dy > 1) score += 1.5 * (dy - 1);        // ponad głową trochę gorzej
+            double tx = c.x - p.getX(), tz = c.z - p.getZ(), len = Math.hypot(tx, tz);
+            if (len > 0.6) score += (1 - (tx * fx + tz * fz) / len) * 1.5;   // preferuj to, co z przodu
+            if (score < bs) { bs = score; best = b; }
         }
-        return valid.get(0);
+        return best != null ? best : nearest;   // brak w zasięgu -> idź do najbliższego
     }
 }
