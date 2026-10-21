@@ -124,9 +124,7 @@ public class Bot {
     /** Wbudowana zamiana klaty z elytrą ze slotu 3 – z OTWARCIEM ekwipunku, tak jak człowiek (E, klik, zamknięcie). */
     private static List<Macros.Step> swapSteps() {
         List<Macros.Step> l = new ArrayList<>();
-        Macros.Step o = new Macros.Step(); o.type = "OPEN"; l.add(o);
-        Macros.Step s = new Macros.Step(); s.type = "SLOT"; s.inv = true; s.a = 6; s.b = ELYTRA_SLOT; s.c = 2; s.delay = 20; l.add(s);
-        Macros.Step c = new Macros.Step(); c.type = "CLOSE"; c.delay = 20; l.add(c);
+                Macros.Step s = new Macros.Step(); s.type = "SLOT"; s.inv = true; s.a = 6; s.b = ELYTRA_SLOT; s.c = 2; s.delay = 20; l.add(s);
         return l;
     }
 
@@ -136,7 +134,7 @@ public class Bot {
         if (player == null) {
             equipTries++;
             if (equipTries > 4) { fail(mc, "Nie udało się założyć elytry (4 próby)."); return false; }
-            boolean macro = Macros.has("elytra_on") && equipTries <= 2;
+            boolean macro = false;   // jak dawniej: szybka wbudowana zamiana, bez nagrań
             if (!macro && !slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) { fail(mc, "Brak elytry w slocie 3 – nie mogę jej założyć."); return false; }
             msg(mc, macro ? "Zakładam elytrę według nagrania (" + Macros.count("elytra_on") + " kroków)."
                           : "Zakładam elytrę wbudowaną metodą (otwieram ekwipunek).");
@@ -799,32 +797,12 @@ public class Bot {
      * bokiem wzdłuż generatora (nigdy nie stój w miejscu). Wysokości się nie boi.
      */
     private void moveWhileMining(MinecraftClient mc, ClientPlayerEntity p, Vec3d c) {
-        double hd = Math.hypot(c.x - p.getX(), c.z - p.getZ());
-        boolean far = hd > 2.0;
-        boolean back = hd < 0.9;                    // za blisko bloku -> cofnij się trochę
-        if (--strafeTicks <= 0) { strafeDir = -strafeDir; strafeTicks = 18 + rng.nextInt(22); }
+        // jak dawniej: cały czas do przodu (ciało i tak skręca w stronę bloku), skok przy przeszkodzie
+        mc.options.forwardKey.setPressed(true);
         mc.options.sprintKey.setPressed(false);
-        mc.options.forwardKey.setPressed(far || (!back && rng.nextInt(3) != 0));
-        mc.options.backKey.setPressed(back);
-        mc.options.leftKey.setPressed(!far && strafeDir < 0);
-        mc.options.rightKey.setPressed(!far && strafeDir > 0);
-        // gwarancja ruchu: gdyby klawisze nie poruszyły bota, popchnij go sam (bez zmiany pionu)
-        if (!p.horizontalCollision && Math.hypot(p.getVelocity().x, p.getVelocity().z) < 0.05) {
-            double dx = c.x - p.getX(), dz = c.z - p.getZ(), len = Math.max(0.001, Math.hypot(dx, dz));
-            double tx = dx / len, tz = dz / len;
-            double fwd = far ? 1.0 : back ? -0.8 : 0.4;
-            double sd = far ? 0 : strafeDir;
-            double vx = (tx * fwd - tz * sd) * 0.2, vz = (tz * fwd + tx * sd) * 0.2;
-            p.setVelocity(vx, p.getVelocity().y, vz);
-        }
-        boolean moved = p.getPos().squaredDistanceTo(lastPos) > 0.0004;
-        if (moved) idleMove = 0; else idleMove++;
-        // zablokowany/stoi -> skacz i zmień stronę
-        boolean jump = p.isOnGround() && (p.horizontalCollision || idleMove > 8);
-        mc.options.jumpKey.setPressed(jump);
-        if (jump && p.getVelocity().y < 0.1) { Vec3d v1 = p.getVelocity(); p.setVelocity(v1.x, 0.42, v1.z); }
-        if (idleMove > 8 && idleMove % 8 == 0) strafeDir = -strafeDir;
-        lastPos = p.getPos();
+        mc.options.backKey.setPressed(false); mc.options.leftKey.setPressed(false); mc.options.rightKey.setPressed(false);
+        mc.options.jumpKey.setPressed(p.isOnGround() && p.horizontalCollision && mineTarget != null
+                && mineTarget.getY() > p.getY() + 1.0);
     }
 
     /** Nie wchodź w przepaść: musi być grunt w ciągu 3 bloków pod miejscem tuż przed botem. */
@@ -870,27 +848,14 @@ public class Bot {
      */
     private BlockPos chooseTarget(ClientWorld w, ClientPlayerEntity p) {
         Vec3d eye = p.getEyePos();
-        int feetY = MathHelper.floor(p.getY());
-        double yaw = Math.toRadians(p.getYaw());
-        double fx = -Math.sin(yaw), fz = Math.cos(yaw);
-        cache.removeIf(b -> !isTarget(w, b));
-        BlockPos best = null; double bs = Double.MAX_VALUE;
-        BlockPos nearest = null; double nd = Double.MAX_VALUE;
-        for (BlockPos b : cache) {
-            Vec3d c = Vec3d.ofCenter(b);
-            double d = c.distanceTo(eye);
-            Integer until = blacklist.get(b);
-            boolean banned = until != null && until > ticks;
-            if (!banned && d < nd) { nd = d; nearest = b; }
-            if (banned || d > REACH + 0.5) continue;
-            double dy = b.getY() - feetY;
-            double score = d;
-            if (dy < 0) score += 5 + 2 * (-dy);            // nie kop dziur pod sobą
-            else if (dy > 1) score += 1.5 * (dy - 1);        // ponad głową trochę gorzej
-            double tx = c.x - p.getX(), tz = c.z - p.getZ(), len = Math.hypot(tx, tz);
-            if (len > 0.6) score += (1 - (tx * fx + tz * fz) / len) * 1.5;   // preferuj to, co z przodu
-            if (score < bs) { bs = score; best = b; }
+        cache.removeIf(x -> !isTarget(w, x));
+        BlockPos best = null; double bd = Double.MAX_VALUE;
+        for (BlockPos x : cache) {
+            Integer until = blacklist.get(x);
+            if (until != null && until > ticks) continue;
+            double d = Vec3d.ofCenter(x).squaredDistanceTo(eye);
+            if (d < bd) { bd = d; best = x; }
         }
-        return best != null ? best : nearest;   // brak w zasięgu -> idź do najbliższego
+        return best;
     }
 }
