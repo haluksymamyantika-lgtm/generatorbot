@@ -11,9 +11,9 @@ import pl.generatorbot.FlatButton.Kind;
 
 public class BotScreen extends Screen {
     private static final int W = 440, H = 276, SIDE = 120;
-    private static final String[] TAB_NAMES = {"Bot", "Miejsca", "Sklep", "Wygląd", "Klawisze"};
+    private static final String[] TAB_NAMES = {"Bot", "Miejsca", "Nagrania", "Wygląd", "Klawisze"};
     private static final String[] TAB_DESC = {
-            "Steruj pracą bota", "Zaznaczone generatory i ich kolejność", "Automatyczne zakupy w /sklep",
+            "Steruj pracą bota", "Zaznaczone generatory i ich kolejność", "Nagraj, jak sam to robisz – bot powtórzy",
             "Wygląd nazw nad generatorami", "Przypisz klawisze Start i Stop"};
     private static int tab = 0;
 
@@ -49,14 +49,19 @@ public class BotScreen extends Screen {
                         () -> GeneratorBotClient.AREAS.clear()));
             }
             case 2 -> {
-                addDrawableChild(new FlatButton(cx0, y0 + 112, half, 24,
-                        Text.literal(ShopRecorder.recording ? "Zakończ nagrywanie" : "Nagraj klikanie"), Kind.ACCENT, () -> {
-                    if (ShopRecorder.recording) { ShopRecorder.stop(client); clearAndInit(); }
-                    else { ShopRecorder.start(client); close(); }
-                }));
-                addDrawableChild(new FlatButton(cx0 + half + 8, y0 + 112, half, 24, Text.literal("Usuń nagranie"), Kind.RED,
-                        () -> { ShopRecorder.clear(); clearAndInit(); }));
-                addDrawableChild(new FlatButton(cx0, y0 + 186, cw, 24,
+                for (int i = 0; i < Macros.KEYS.length; i++) {
+                    final String key = Macros.KEYS[i];
+                    int ry = y0 + 52 + i * 40;
+                    boolean rec = key.equals(Macros.recording);
+                    addDrawableChild(new FlatButton(cx0 + cw - 150, ry + 7, 90, 22, Text.literal(rec ? "Zakończ" : "Nagraj"),
+                            rec ? Kind.ACCENT : Kind.NORMAL, () -> {
+                        if (key.equals(Macros.recording)) { Macros.stop(client); clearAndInit(); }
+                        else { Macros.start(client, key); close(); }
+                    }));
+                    addDrawableChild(new FlatButton(cx0 + cw - 54, ry + 7, 50, 22, Text.literal("Usuń"), Kind.RED,
+                            () -> { Macros.clear(key); clearAndInit(); }));
+                }
+                addDrawableChild(new FlatButton(cx0, y0 + 216, cw, 24,
                         Text.literal("Po zakupie: " + (Settings.autoRestart ? "AUTOMATYCZNY restart" : "RĘCZNY Start")),
                         Settings.autoRestart ? Kind.GREEN : Kind.NORMAL,
                         () -> { Settings.autoRestart = !Settings.autoRestart; Settings.save(); clearAndInit(); }));
@@ -163,16 +168,16 @@ public class BotScreen extends Screen {
                 Ui.text(c, Text.literal("Shift+J – cofnij róg / usuń ostatni obszar"), cx0, y0 + 70, Ui.MUTED);
             }
             case 2 -> {
-                Ui.round(c, cx0, y0 + 52, cx0 + cw, y0 + 102, Ui.CARD);
-                Ui.text(c, Text.literal("Kliknij „Nagraj klikanie”, wpisz /sklep"), cx0 + 10, y0 + 60, 0xFFFFFFFF);
-                Ui.text(c, Text.literal("i kliknij ręcznie wszystko po kolei."), cx0 + 10, y0 + 72, 0xFFFFFFFF);
-                Ui.text(c, Text.literal("Bot odtworzy dokładnie te kliknięcia."), cx0 + 10, y0 + 86, Ui.MUTED);
-                int steps = ShopRecorder.steps.size();
-                Ui.round(c, cx0, y0 + 146, cx0 + cw, y0 + 176, Ui.CARD);
-                Ui.text(c, Text.literal(ShopRecorder.recording ? "Nagrywam… kroki: " + steps
-                                : steps > 0 ? "Zapisane kroki sklepu: " + steps : "Brak nagrania (bot szuka po nazwach)")
-                                .formatted(steps > 0 || ShopRecorder.recording ? Formatting.GREEN : Formatting.GRAY),
-                        cx0 + 10, y0 + 157, 0xFFFFFFFF);
+                for (int i = 0; i < Macros.KEYS.length; i++) {
+                    String key = Macros.KEYS[i];
+                    int ry = y0 + 52 + i * 40;
+                    Ui.round(c, cx0, ry, cx0 + cw, ry + 36, Ui.CARD);
+                    Ui.text(c, Text.literal(Macros.TITLES[i]).formatted(Formatting.BOLD), cx0 + 10, ry + 7, 0xFFFFFFFF);
+                    boolean rec = key.equals(Macros.recording);
+                    int n = Macros.count(key);
+                    Ui.text(c, Text.literal(rec ? "Nagrywam… kroki: " + n : n > 0 ? "Nagrane kroki: " + n : "Brak nagrania")
+                            .formatted(rec ? Formatting.YELLOW : n > 0 ? Formatting.GREEN : Formatting.GRAY), cx0 + 10, ry + 21, 0xFFFFFFFF);
+                }
             }
             case 3 -> {
                 Ui.round(c, cx0, y0 + 52, cx0 + cw, y0 + 154, Ui.CARD);

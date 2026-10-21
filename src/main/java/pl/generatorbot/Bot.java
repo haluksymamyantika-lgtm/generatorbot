@@ -62,7 +62,9 @@ public class Bot {
     private int equipCd;
     private boolean minedThisRound, toStation;
     private int rItem, rStep, rTimer, rTries, repairTicks;
-    private int shopAction, plusLeft, plusSlot, restartIn;
+    private int shopAction, plusLeft, plusSlot, restartIn, equipTries;
+    private MacroPlayer player;
+    private boolean rMacroDone;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
     private final List<BlockPos> cache = new ArrayList<>();
@@ -101,6 +103,7 @@ public class Bot {
         if (!slotHas(p, ROCKET_SLOT, Bot::isRocket)) { msg(mc, "Połóż fajerwerki w slocie 4 paska."); return; }
         for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false;
         minedThisRound = false;
+        player = null; equipTries = 0;
         current = null; lastFinished = null; mineTarget = null; toStation = false;
         cache.clear(); blacklist.clear();
         state = State.SEARCH; status = "Szukam obszaru";
@@ -108,7 +111,7 @@ public class Bot {
     }
 
     public void stop(MinecraftClient mc) {
-        restartIn = 0;
+        restartIn = 0; player = null; equipTries = 0;
         boolean was = state != State.STOPPED;
         state = State.STOPPED; status = "Zatrzymany";
         if (mc.interactionManager != null) mc.interactionManager.cancelBlockBreaking();
@@ -234,6 +237,16 @@ public class Bot {
 
     private void flight(MinecraftClient mc, ClientPlayerEntity p) {
         ClientWorld w = mc.world;
+        if (hasElytra(p)) equipTries = 0;
+        if (!hasElytra(p) && !p.isGliding() && Macros.has("elytra_on")) {
+            if (player == null) {
+                if (++equipTries > 3) { fail(mc, "Nie udało się założyć elytry (nagranie nie pomogło)."); return; }
+                player = new MacroPlayer(Macros.get("elytra_on"));
+            }
+            status = "Zakładam elytrę (nagranie)";
+            if (player.tick(mc, p, w)) player = null;
+            return;
+        }
         if (!hasElytra(p)) {
             // sam zakłada elytrę ze slotu 3 (zamiana z napierśnikiem)
             if (!p.isGliding() && slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) {
@@ -325,7 +338,7 @@ public class Bot {
 
     private void beginRepair() {
         state = State.REPAIR; toStation = false;
-        rItem = 0; rStep = 0; rTimer = 0; rTries = 0; repairTicks = 0;
+        rItem = 0; rStep = 0; rTimer = 0; rTries = 0; repairTicks = 0; rMacroDone = false; player = null;
         status = "Naprawa: idę do kowadła";
     }
 
@@ -423,7 +436,10 @@ public class Bot {
         }
         if (rStep == 11) {
             if (mc.currentScreen instanceof HandledScreen<?> && !(mc.currentScreen instanceof InventoryScreen)) {
-                if (rTimer >= 12) { rStep = 12; rTimer = 0; }
+                if (rTimer >= 12) {
+                    if (Macros.has("shop")) { player = new MacroPlayer(Macros.get("shop")); rStep = 24; } else rStep = 12;
+                    rTimer = 0;
+                }
                 return;
             }
             if (rTimer > 100) shopFail(mc, p, "okno /sklep się nie otworzyło", null);
@@ -436,11 +452,7 @@ public class Bot {
             }
             ScreenHandler h = hs.getScreenHandler();
             int sl = -1; String label = "";
-            boolean rec = !ShopRecorder.steps.isEmpty();
-            if (rec) {
-                int idx = shopAction - 1;
-                if (idx >= 0 && idx < ShopRecorder.steps.size()) { sl = ShopRecorder.steps.get(idx); label = "krok " + shopAction; }
-            } else switch (shopAction) {
+            switch (shopAction) {
                 case 1 -> { sl = findByName(h, "pieni"); label = "Pieniądze (zielona moneta)"; }
                 case 2 -> { sl = findByName(h, "potrzebne"); label = "Potrzebne przedmioty (czerwona skrzynia)"; }
                 case 3 -> { sl = findByItem(h, Items.FIREWORK_ROCKET); label = "fajerwerki"; }
@@ -473,8 +485,8 @@ public class Bot {
         }
         if (rStep == 13) {
             if (rTimer >= 22) {
-                if (ShopRecorder.steps.isEmpty() && shopAction == 4 && plusLeft > 0) { rStep = 12; rTimer = 0; }
-                else { shopAction++; rStep = shopAction > (ShopRecorder.steps.isEmpty() ? 5 : ShopRecorder.steps.size()) ? 14 : 12; rTimer = 0; }
+                if (shopAction == 4 && plusLeft > 0) { rStep = 12; rTimer = 0; }
+                else { shopAction++; rStep = shopAction > 5 ? 14 : 12; rTimer = 0; }
             }
             return;
         }
@@ -502,6 +514,12 @@ public class Bot {
         }
         if (rStep == 16) { // elytra na klatę
             if (rTimer < 25) return;
+            if (!hasElytra(p) && Macros.has("elytra_on")) {
+                if (player == null) player = new MacroPlayer(Macros.get("elytra_on"));
+                status = "Zakładam elytrę (nagranie)";
+                if (player.tick(mc, p, w)) { player = null; rStep = 17; rTimer = 0; }
+                return;
+            }
             if (hasElytra(p)) { rStep = 17; rTimer = 0; return; }
             if (slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) {
                 if (equipCd <= 0) {
@@ -523,12 +541,40 @@ public class Bot {
             return;
         }
 
+        // ---- NAGRANIA: zdejmij elytrę -> naprawa -> (sklep) ----
+        if (rStep == 20) {
+            if (Macros.has("elytra_off")) { player = new MacroPlayer(Macros.get("elytra_off")); status = "Naprawa: zdejmuję elytrę (nagranie)"; rStep = 21; }
+            else rStep = 22;
+            rTimer = 0;
+            return;
+        }
+        if (rStep == 21) { if (player.tick(mc, p, w)) { player = null; rStep = 22; rTimer = 0; } return; }
+        if (rStep == 22) {
+            if (Macros.has("repair")) { player = new MacroPlayer(Macros.get("repair")); status = "Naprawa (nagranie)"; rStep = 23; }
+            else { rMacroDone = true; rStep = 1; }
+            rTimer = 0;
+            return;
+        }
+        if (rStep == 23) {
+            if (player.tick(mc, p, w)) {
+                player = null; rMacroDone = true; rItem = REPAIR_ORDER.length;
+                rStep = 10; rTimer = 0; shopAction = 1; plusLeft = 0; plusSlot = -1;
+                status = "Sklep: wpisuję /sklep";
+            }
+            return;
+        }
+        if (rStep == 24) {
+            status = "Sklep (nagranie)";
+            if (player.tick(mc, p, w)) { player = null; rStep = 14; rTimer = 0; }
+            return;
+        }
+
         if (rStep == 0) { // podejdź do kowadła (jeśli widać blok), inaczej do koordynatów
             BlockPos anv = findAnvil(w, p, 10, 99);
             Vec3d walkT = anv != null ? Vec3d.ofCenter(anv) : STATION;
             double dh = Math.hypot(walkT.x - p.getX(), walkT.z - p.getZ());
             double need = anv != null ? 2.5 : 1.0;
-            if (dh < need || rTimer > 200) { KeyBinding.unpressAll(); rStep = 1; rTimer = 0; return; }
+            if (dh < need || rTimer > 200) { KeyBinding.unpressAll(); rStep = rMacroDone ? 1 : 20; rTimer = 0; return; }
             p.setYaw(yawTo(p.getPos(), new Vec3d(walkT.x, p.getY(), walkT.z)));
             p.setPitch(10f);
             mc.options.forwardKey.setPressed(true);
