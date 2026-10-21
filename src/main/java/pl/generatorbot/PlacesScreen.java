@@ -2,19 +2,19 @@ package pl.generatorbot;
 
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import pl.generatorbot.AreaManager.Area;
+import pl.generatorbot.FlatButton.Kind;
 
 import java.util.Collections;
 import java.util.List;
 
-/** Panel miejsc: nazwa, ON/OFF, kolor (czerwony/niebieski), kolejność lotu, usuwanie. */
+/** Panel miejsc: nazwa, ON/OFF, kolor, kolejność lotu, usuwanie. */
 public class PlacesScreen extends Screen {
-    private static final int PER_PAGE = 6;
-    private int page;
+    private static final int PER_PAGE = 6, W = 340, ROW = 28;
+    private int page, x0, y0, H;
 
     public PlacesScreen() { super(Text.literal("Miejsca")); }
 
@@ -23,93 +23,77 @@ public class PlacesScreen extends Screen {
         List<Area> list = GeneratorBotClient.AREAS.areas;
         int pages = Math.max(1, (list.size() + PER_PAGE - 1) / PER_PAGE);
         page = Math.max(0, Math.min(page, pages - 1));
-        int x0 = width / 2 - 160, y0 = 44;
+        H = 56 + PER_PAGE * ROW + 40;
+        x0 = (width - W) / 2;
+        y0 = Math.max(4, (height - H) / 2);
 
         for (int r = 0; r < PER_PAGE; r++) {
             int idx = page * PER_PAGE + r;
             if (idx >= list.size()) break;
             final int i = idx;
             final Area a = list.get(idx);
-            int y = y0 + r * 26;
+            int ry = y0 + 52 + r * ROW;
 
-            TextFieldWidget tf = new TextFieldWidget(textRenderer, x0, y, 126, 20, Text.literal("Nazwa"));
+            TextFieldWidget tf = new TextFieldWidget(textRenderer, x0 + 16, ry + 3, 112, 20, Text.literal("Nazwa"));
             tf.setMaxLength(24);
             tf.setText(a.displayName(i));
             tf.setChangedListener(s -> a.name = s);
             addDrawableChild(tf);
 
-            addDrawableChild(ButtonWidget.builder(onOff(a.enabled), b -> {
-                a.enabled = !a.enabled;
-                b.setMessage(onOff(a.enabled));
-            }).dimensions(x0 + 130, y, 36, 20).build());
-
-            addDrawableChild(ButtonWidget.builder(color(a.visited), b -> {
-                a.visited = !a.visited;
-                b.setMessage(color(a.visited));
-            }).dimensions(x0 + 170, y, 74, 20).build());
-
-            addDrawableChild(ButtonWidget.builder(Text.literal("^"), b -> {
-                if (i > 0) { Collections.swap(list, i, i - 1); clearAndInit(); }
-            }).dimensions(x0 + 248, y, 20, 20).build());
-
-            addDrawableChild(ButtonWidget.builder(Text.literal("v"), b -> {
-                if (i < list.size() - 1) { Collections.swap(list, i, i + 1); clearAndInit(); }
-            }).dimensions(x0 + 272, y, 20, 20).build());
-
-            addDrawableChild(ButtonWidget.builder(Text.literal("X"), b -> {
-                list.remove(i);
-                GeneratorBotClient.AREAS.save();
-                clearAndInit();
-            }).dimensions(x0 + 296, y, 20, 20).build());
+            addDrawableChild(new FlatButton(x0 + 132, ry + 3, 38, 20, onOff(a.enabled), a.enabled ? Kind.GREEN : Kind.RED,
+                    () -> { a.enabled = !a.enabled; clearAndInit(); }));
+            addDrawableChild(new FlatButton(x0 + 174, ry + 3, 70, 20, color(a.visited), Kind.NORMAL,
+                    () -> { a.visited = !a.visited; clearAndInit(); }));
+            addDrawableChild(new FlatButton(x0 + 248, ry + 3, 20, 20, Text.literal("^"), Kind.NORMAL,
+                    () -> { if (i > 0) { Collections.swap(list, i, i - 1); clearAndInit(); } }));
+            addDrawableChild(new FlatButton(x0 + 272, ry + 3, 20, 20, Text.literal("v"), Kind.NORMAL,
+                    () -> { if (i < list.size() - 1) { Collections.swap(list, i, i + 1); clearAndInit(); } }));
+            addDrawableChild(new FlatButton(x0 + 296, ry + 3, 20, 20, Text.literal("X"), Kind.RED,
+                    () -> { list.remove(i); GeneratorBotClient.AREAS.save(); clearAndInit(); }));
         }
 
-        int yb = y0 + PER_PAGE * 26 + 6;
+        int yb = y0 + 52 + PER_PAGE * ROW + 6;
         final int lastPage = pages - 1;
-        addDrawableChild(ButtonWidget.builder(Text.literal("<"), b -> {
-            if (page > 0) { page--; clearAndInit(); }
-        }).dimensions(x0, yb, 40, 20).build());
-        addDrawableChild(ButtonWidget.builder(Text.literal(">"), b -> {
-            if (page < lastPage) { page++; clearAndInit(); }
-        }).dimensions(x0 + 44, yb, 40, 20).build());
-        addDrawableChild(ButtonWidget.builder(Text.literal("Wszystkie ON"), b -> {
-            for (Area ar : list) ar.enabled = true;
-            clearAndInit();
-        }).dimensions(x0 + 90, yb, 110, 20).build());
-        addDrawableChild(ButtonWidget.builder(Text.literal("Wróć"), b ->
-                client.setScreen(new BotScreen())).dimensions(x0 + 206, yb, 110, 20).build());
+        addDrawableChild(new FlatButton(x0 + 10, yb, 30, 22, Text.literal("<"), Kind.NORMAL,
+                () -> { if (page > 0) { page--; clearAndInit(); } }));
+        addDrawableChild(new FlatButton(x0 + 44, yb, 30, 22, Text.literal(">"), Kind.NORMAL,
+                () -> { if (page < lastPage) { page++; clearAndInit(); } }));
+        addDrawableChild(new FlatButton(x0 + 80, yb, 120, 22, Text.literal("Wszystkie ON"), Kind.NORMAL,
+                () -> { for (Area ar : list) ar.enabled = true; clearAndInit(); }));
+        addDrawableChild(new FlatButton(x0 + 206, yb, 124, 22, Text.literal("Wróć"), Kind.ACCENT,
+                () -> client.setScreen(new BotScreen())));
     }
 
-    private static Text onOff(boolean on) {
-        return Text.literal(on ? "ON" : "OFF").formatted(on ? Formatting.GREEN : Formatting.RED, Formatting.BOLD);
-    }
+    private static Text onOff(boolean on) { return Text.literal(on ? "ON" : "OFF").formatted(Formatting.BOLD); }
 
     private static Text color(boolean visited) {
         return Text.literal(visited ? "Niebieski" : "Czerwony").formatted(visited ? Formatting.AQUA : Formatting.RED);
     }
 
     @Override
-    public void renderBackground(DrawContext ctx, int mouseX, int mouseY, float delta) {
-        super.renderBackground(ctx, mouseX, mouseY, delta);
-        int x0 = width / 2 - 172, x1 = width / 2 + 172, y1 = 44 + PER_PAGE * 26 + 34;
-        ctx.fill(x0 - 1, 3, x1 + 1, y1 + 1, 0xFF3A7BD5);
-        ctx.fill(x0, 4, x1, y1, 0xE0101420);
-        ctx.fill(x0, 4, x1, 38, 0xFF1B2A4A);
+    public void renderBackground(DrawContext c, int mouseX, int mouseY, float delta) {
+        super.renderBackground(c, mouseX, mouseY, delta);
+        Ui.roundBorder(c, x0 - 1, y0 - 1, x0 + W + 1, y0 + H + 1, Ui.LINE, Ui.BG);
+
+        List<Area> list = GeneratorBotClient.AREAS.areas;
+        int pages = Math.max(1, (list.size() + PER_PAGE - 1) / PER_PAGE);
+        Ui.big(c, Text.literal("Miejsca").formatted(Formatting.BOLD), x0 + 14, y0 + 12, 1.4f);
+        Ui.text(c, Text.literal("strona " + (page + 1) + "/" + pages), x0 + W - 70, y0 + 16, Ui.MUTED);
+        Ui.text(c, Text.literal("Bot leci z góry na dół. ON = leci, OFF = pomija."), x0 + 14, y0 + 34, Ui.MUTED);
+
+        for (int r = 0; r < PER_PAGE; r++) {
+            int idx = page * PER_PAGE + r;
+            if (idx >= list.size()) break;
+            Area a = list.get(idx);
+            int ry = y0 + 52 + r * ROW;
+            Ui.round(c, x0 + 8, ry, x0 + W - 8, ry + ROW - 2, Ui.CARD);
+            int stripe = !a.enabled ? 0xFF6B6B73 : a.visited ? 0xFF38A9FF : Ui.RED;
+            c.fill(x0 + 8, ry + 3, x0 + 11, ry + ROW - 5, stripe);
+        }
     }
 
     @Override
-    public void removed() {
-        GeneratorBotClient.AREAS.save();
-    }
-
-    @Override
-    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-        super.render(ctx, mouseX, mouseY, delta);
-        int cx = width / 2;
-        int pages = Math.max(1, (GeneratorBotClient.AREAS.areas.size() + PER_PAGE - 1) / PER_PAGE);
-        ctx.drawCenteredTextWithShadow(textRenderer, Text.literal("Miejsca  (strona " + (page + 1) + "/" + pages + ")").formatted(Formatting.GOLD, Formatting.BOLD), cx, 10, 0xFFFFFF);
-        ctx.drawCenteredTextWithShadow(textRenderer,
-                Text.literal("Bot leci z góry na dół. ON = leci, OFF = pomija. ^ v = kolejność.").formatted(Formatting.GRAY), cx, 24, 0xFFFFFF);
-    }
+    public void removed() { GeneratorBotClient.AREAS.save(); }
 
     @Override
     public boolean shouldPause() { return false; }
