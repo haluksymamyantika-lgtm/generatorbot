@@ -93,7 +93,7 @@ public class Macros {
         DATA.get(key).add(s);
         int idx = Arrays.asList(KEYS).indexOf(key);
         Bot.msg(mc, "NAGRYWANIE: " + TITLES[idx] + ". " + HINTS[idx]);
-        Bot.msg(mc, "Gdy skończysz: przestań klikać – po 2 sekundach nagranie zapisze się samo (usłyszysz piknięcie) (albo L → Nagrania → Zakończ).");
+        Bot.msg(mc, "Gdy skończysz: przestań klikać – po 4 sekundach bez klikania nagranie zapisze się samo (usłyszysz piknięcie) (albo L → Nagrania → Zakończ).");
     }
 
     public static void stop(MinecraftClient mc) {
@@ -127,8 +127,8 @@ public class Macros {
                 add(mc, s, "wybrany slot " + (sel + 1));
             }
         }
-        // 2 sekundy bez żadnego kliknięcia = nagranie zapisuje się samo (z piknięciem)
-        if (real && ++idle > 40) stop(mc);
+        // 4 sekundy bez żadnego kliknięcia = nagranie zapisuje się samo (z piknięciem); każde kliknięcie zeruje odliczanie
+        if (real && ++idle > 80) stop(mc);
     }
 
     public static void onSlotClick(MinecraftClient mc, HandledScreen<?> hs, int button) {
