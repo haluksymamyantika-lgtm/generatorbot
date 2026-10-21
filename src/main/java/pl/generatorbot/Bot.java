@@ -206,6 +206,7 @@ public class Bot {
 
     private void beginMine() {
         state = State.MINE; status = "Kopię"; minedThisRound = true;
+        player = null;   // elytra zostaje założona po lądowaniu; zdejmuje ją dopiero naprawa
         cache.clear(); rescanIn = 0; mineTarget = null; stuck = 0; walkTicks = 0;
     }
 
@@ -214,7 +215,7 @@ public class Bot {
         current = dest;
         flyTarget = dest.flyPoint();
         toStation = false;
-        state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false; diveLocked = false;
+        state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false; diveLocked = false; player = null;
         status = flee ? "Gracz blisko – lecę do następnego generatora" : "Lecę do generatora";
         mc.interactionManager.cancelBlockBreaking();
         KeyBinding.unpressAll();
@@ -225,7 +226,7 @@ public class Bot {
         current = null;
         toStation = true;
         flyTarget = STATION;
-        state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false; diveLocked = false;
+        state = State.FLY; flightTicks = 0; mineTarget = null; climbed = false; diveLocked = false; player = null;
         status = "Lecę do kowadła (naprawa)";
         mc.interactionManager.cancelBlockBreaking();
         KeyBinding.unpressAll();
@@ -543,7 +544,7 @@ public class Bot {
 
         // ---- NAGRANIA: zdejmij elytrę -> naprawa -> (sklep) ----
         if (rStep == 20) {
-            if (Macros.has("elytra_off")) { player = new MacroPlayer(Macros.get("elytra_off")); status = "Naprawa: zdejmuję elytrę (nagranie)"; rStep = 21; }
+            if (Macros.has("elytra_off") && hasElytra(p)) { player = new MacroPlayer(Macros.get("elytra_off")); status = "Naprawa: zdejmuję elytrę (nagranie)"; rStep = 21; }
             else rStep = 22;
             rTimer = 0;
             return;
