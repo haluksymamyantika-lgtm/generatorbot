@@ -62,7 +62,7 @@ public class Bot {
     private int equipCd;
     private boolean minedThisRound, toStation;
     private int rItem, rStep, rTimer, rTries, repairTicks;
-    private int shopAction, plusLeft, plusSlot;
+    private int shopAction, plusLeft, plusSlot, restartIn;
     private int ticks, waitTicks, fireworkCd, stuck, rescanIn, walkTicks, flightTicks;
     private BlockPos mineTarget;
     private final List<BlockPos> cache = new ArrayList<>();
@@ -108,6 +108,7 @@ public class Bot {
     }
 
     public void stop(MinecraftClient mc) {
+        restartIn = 0;
         boolean was = state != State.STOPPED;
         state = State.STOPPED; status = "Zatrzymany";
         if (mc.interactionManager != null) mc.interactionManager.cancelBlockBreaking();
@@ -118,6 +119,7 @@ public class Bot {
     private void fail(MinecraftClient mc, String why) { msg(mc, why); stop(mc); }
 
     public void tick(MinecraftClient mc) {
+        if (restartIn > 0 && --restartIn == 0) { start(mc); return; }
         if (state == State.STOPPED) return;
         ClientPlayerEntity p = mc.player;
         ClientWorld w = mc.world;
@@ -327,6 +329,17 @@ public class Bot {
         status = "Naprawa: idę do kowadła";
     }
 
+    /** Po zakupach: bot wyłącza się i (zależnie od ustawienia) włącza sam albo czeka na ręczny Start. */
+    private void afterShop(MinecraftClient mc) {
+        stop(mc);
+        if (Settings.autoRestart) {
+            msg(mc, "Zakupy zrobione – bot włączy się sam za chwilę.");
+            restartIn = 40;
+        } else {
+            msg(mc, "Zakupy zrobione – bot zatrzymany. Naciśnij Start, gdy będziesz gotowy.");
+        }
+    }
+
     private void finishRepair(MinecraftClient mc) {
         KeyBinding.unpressAll();
         for (Area ar : GeneratorBotClient.AREAS.areas) ar.visited = false; // nowa runda: wszystko znów czerwone
@@ -349,15 +362,15 @@ public class Bot {
         p.setPitch((float) -Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z))));
     }
 
-    private BlockPos findAnvil(ClientWorld w, ClientPlayerEntity p) {
+    private BlockPos findAnvil(ClientWorld w, ClientPlayerEntity p, int r, double maxDist) {
         BlockPos base = p.getBlockPos();
         BlockPos best = null; double bd = Double.MAX_VALUE;
-        for (int x = -4; x <= 4; x++) for (int y = -3; y <= 3; y++) for (int z = -4; z <= 4; z++) {
+        for (int x = -r; x <= r; x++) for (int y = -4; y <= 4; y++) for (int z = -r; z <= r; z++) {
             BlockPos b = base.add(x, y, z);
             Block bl = w.getBlockState(b).getBlock();
             if (bl != Blocks.ANVIL && bl != Blocks.CHIPPED_ANVIL && bl != Blocks.DAMAGED_ANVIL) continue;
             double d = Vec3d.ofCenter(b).distanceTo(p.getEyePos());
-            if (d <= 4.4 && d < bd) { bd = d; best = b; }
+            if (d <= maxDist && d < bd) { bd = d; best = b; }
         }
         return best;
     }
@@ -468,14 +481,55 @@ public class Bot {
         if (rStep == 14) {
             if (rTimer < 14) return;
             if (mc.currentScreen != null) p.closeHandledScreen();
-            finishRepair(mc);
+            rStep = 15; rTimer = 0;
+            status = "Po zakupach: układam ekwipunek";
+            return;
+        }
+        if (rStep == 15) { // fajerwerki z zakupów -> slot 4
+            if (rTimer < 25) return;
+            if (!slotHas(p, ROCKET_SLOT, Bot::isRocket)) {
+                for (int i = 0; i < 36; i++) {
+                    if (i == ROCKET_SLOT) continue;
+                    if (isRocket(p.getInventory().getStack(i))) {
+                        int id = i < 9 ? 36 + i : i;
+                        mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, id, ROCKET_SLOT, SlotActionType.SWAP, p);
+                        break;
+                    }
+                }
+            }
+            rStep = 16; rTimer = 0;
+            return;
+        }
+        if (rStep == 16) { // elytra na klatę
+            if (rTimer < 25) return;
+            if (hasElytra(p)) { rStep = 17; rTimer = 0; return; }
+            if (slotHas(p, ELYTRA_SLOT, Bot::isElytraStack)) {
+                if (equipCd <= 0) {
+                    mc.interactionManager.clickSlot(p.playerScreenHandler.syncId, 6, ELYTRA_SLOT, SlotActionType.SWAP, p);
+                    equipCd = 40;
+                }
+                status = "Zakładam elytrę";
+            } else if (rTimer > 40) {
+                msg(mc, "Brak elytry do założenia po zakupach.");
+                rStep = 17; rTimer = 0;
+                return;
+            }
+            if (rTimer > 240) { rStep = 17; rTimer = 0; }
+            return;
+        }
+        if (rStep == 17) {
+            if (rTimer < 20) return;
+            afterShop(mc);
             return;
         }
 
-        if (rStep == 0) { // dojdź na dokładne koordynaty
-            double dh = Math.hypot(STATION.x - p.getX(), STATION.z - p.getZ());
-            if (dh < 1.0 || rTimer > 140) { KeyBinding.unpressAll(); rStep = 1; rTimer = 0; return; }
-            p.setYaw(yawTo(p.getPos(), new Vec3d(STATION.x, p.getY(), STATION.z)));
+        if (rStep == 0) { // podejdź do kowadła (jeśli widać blok), inaczej do koordynatów
+            BlockPos anv = findAnvil(w, p, 10, 99);
+            Vec3d walkT = anv != null ? Vec3d.ofCenter(anv) : STATION;
+            double dh = Math.hypot(walkT.x - p.getX(), walkT.z - p.getZ());
+            double need = anv != null ? 2.5 : 1.0;
+            if (dh < need || rTimer > 200) { KeyBinding.unpressAll(); rStep = 1; rTimer = 0; return; }
+            p.setYaw(yawTo(p.getPos(), new Vec3d(walkT.x, p.getY(), walkT.z)));
             p.setPitch(10f);
             mc.options.forwardKey.setPressed(true);
             mc.options.jumpKey.setPressed(p.horizontalCollision && p.isOnGround());
@@ -485,6 +539,12 @@ public class Bot {
         if (rStep == 1) { // przedmiot do ręki
             if (rTimer > 120) { msg(mc, "Nie mogę wziąć przedmiotu ze slotu " + (slot + 1) + " – pomijam."); nextRepairItem(mc, p); return; }
             if (rTimer < 15) return;
+            ItemStack cur = (slot == ELYTRA_SLOT && hasElytra(p)) ? p.getEquippedStack(EquipmentSlot.CHEST) : p.getInventory().getStack(slot);
+            if (pr.test(cur) && !cur.isDamaged()) {
+                msg(mc, "Slot " + (slot + 1) + ": przedmiot nie jest zniszczony – pomijam.");
+                nextRepairItem(mc, p);
+                return;
+            }
             if (!slotHas(p, slot, pr)) {
                 if (slot == ELYTRA_SLOT && hasElytra(p)) { // elytra jest założona -> przenieś ją z powrotem do slotu 3
                     if (equipCd <= 0) {
@@ -504,12 +564,22 @@ public class Bot {
         }
         if (rStep == 2) { // jedno kliknięcie prawym
             if (rTimer < 25) return;
+            // w ręce MUSI być właściwy przedmiot (inaczej np. klata zamiast elytry -> "przedmiot nie jest zniszczony")
+            if (!pr.test(p.getMainHandStack())) { rStep = 1; rTimer = 0; return; }
             rTries++;
-            BlockPos anvil = (rTries == 2) ? findAnvil(w, p) : null;
+            if (rTries > 5) { msg(mc, "Nie udało się kliknąć kowadła – pomijam slot " + (slot + 1) + "."); nextRepairItem(mc, p); return; }
+            BlockPos anvil = findAnvil(w, p, 6, 4.4);
             if (anvil != null) {
                 Vec3d c = Vec3d.ofCenter(anvil);
                 lookAt(p, c);
                 mc.interactionManager.interactBlock(p, Hand.MAIN_HAND, new BlockHitResult(c, Direction.UP, anvil, false));
+            } else if (findAnvil(w, p, 10, 99) != null) {
+                rStep = 0; rTimer = 0; return;               // kowadło jest, ale za daleko -> podejdź
+            } else if (slot == ELYTRA_SLOT) {
+                // PPM elytrą w powietrze zakłada ją na klatę (zamiast naprawy) – nigdy tego nie robimy
+                msg(mc, "Nie widzę kowadła przy x -7, y 161, z 1 – pomijam elytrę.");
+                nextRepairItem(mc, p);
+                return;
             } else {
                 mc.interactionManager.interactItem(p, Hand.MAIN_HAND);
             }
